@@ -21,50 +21,82 @@ st.set_page_config(page_title="정비사업 입찰공고 수집기", page_icon="
 BASE_DIR = Path(__file__).resolve().parent
 
 # ------------------------------------------------------------------
-# 디자인 (커스텀 CSS)
+# 디자인 (커스텀 CSS) - 사내 인트라넷(EGA) 톤에 맞춘 오렌지 테마
 # ------------------------------------------------------------------
+BRAND_ORANGE = "#E8590C"
+BRAND_ORANGE_DARK = "#C94E0B"
+BRAND_ORANGE_LIGHT = "#FFF1E8"
+
 st.markdown(
-    """
+    f"""
     <style>
-    .stApp { background-color: #0E1117; }
-    .main .block-container { padding-top: 2rem; max-width: 1200px; }
+    .stApp {{ background-color: #F4F5F7; }}
+    .main .block-container {{ padding-top: 1.5rem; max-width: 1200px; }}
 
-    .app-header {
-        background: linear-gradient(135deg, #1F3864 0%, #2E5090 100%);
-        padding: 28px 32px;
-        border-radius: 14px;
-        margin-bottom: 24px;
-        box-shadow: 0 4px 18px rgba(0,0,0,0.25);
-    }
-    .app-header h1 {
-        color: #FFFFFF; font-size: 28px; margin: 0 0 6px 0; font-weight: 700;
-    }
-    .app-header p {
-        color: #CBD8EE; font-size: 14px; margin: 0;
-    }
-
-    div[data-testid="stMetric"] {
-        background-color: #1A2233;
-        border: 1px solid #2A3550;
+    .app-header {{
+        background-color: #FFFFFF;
+        border-bottom: 4px solid {BRAND_ORANGE};
+        padding: 20px 28px;
         border-radius: 10px;
-        padding: 14px 18px;
-    }
-    div[data-testid="stMetricLabel"] { color: #9FB3D1; }
-    div[data-testid="stMetricValue"] { color: #FFFFFF; }
+        margin-bottom: 24px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+        display: flex;
+        align-items: center;
+        gap: 16px;
+    }}
+    .app-header .logo {{
+        font-size: 30px; font-weight: 800; color: {BRAND_ORANGE};
+        letter-spacing: 1px; line-height: 1;
+    }}
+    .app-header .title-block h1 {{
+        color: #222222; font-size: 22px; margin: 0 0 4px 0; font-weight: 700;
+    }}
+    .app-header .title-block p {{
+        color: #666666; font-size: 13px; margin: 0;
+    }}
 
-    .stButton > button[kind="primary"] {
-        background-color: #C0392B;
+    div[data-testid="stMetric"] {{
+        background-color: #FFFFFF;
+        border: 1px solid #EEEEEE;
+        border-left: 4px solid {BRAND_ORANGE};
+        border-radius: 8px;
+        padding: 14px 18px;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+    }}
+    div[data-testid="stMetricLabel"] {{ color: #888888; }}
+    div[data-testid="stMetricValue"] {{ color: #222222; }}
+
+    .stButton > button[kind="primary"] {{
+        background-color: {BRAND_ORANGE};
         border: none;
         font-weight: 600;
-        border-radius: 8px;
-    }
-    .stButton > button[kind="primary"]:hover {
-        background-color: #A93226;
-    }
+        border-radius: 6px;
+        color: #FFFFFF;
+    }}
+    .stButton > button[kind="primary"]:hover {{
+        background-color: {BRAND_ORANGE_DARK};
+    }}
 
-    section[data-testid="stSidebar"] {
-        background-color: #131722;
-    }
+    section[data-testid="stSidebar"] {{
+        background-color: #FFFFFF;
+        border-right: 1px solid #EEEEEE;
+    }}
+    section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {{
+        color: {BRAND_ORANGE};
+    }}
+
+    div[data-testid="stExpander"] {{
+        background-color: #FFFFFF;
+        border: 1px solid #EEEEEE !important;
+        border-radius: 8px;
+    }}
+
+    div[data-testid="stDataFrame"] {{
+        border: 1px solid #EEEEEE;
+        border-radius: 8px;
+    }}
+
+    .stAlert {{ border-radius: 8px; }}
     </style>
     """,
     unsafe_allow_html=True,
@@ -153,8 +185,11 @@ if st.sidebar.button("💾 필터 규칙 저장", use_container_width=True):
 st.markdown(
     """
     <div class="app-header">
-        <h1>🏗️ 정비사업 입찰공고 수집기</h1>
-        <p>누리장터 민간입찰공고 중 정비사업 관련 기술용역 공고만 자동으로 걸러서 보여줍니다.</p>
+        <div class="logo">EGA</div>
+        <div class="title-block">
+            <h1>정비사업 입찰공고 수집기</h1>
+            <p>누리장터 민간입찰공고 중 정비사업 관련 기술용역 공고만 자동으로 걸러서 보여줍니다.</p>
+        </div>
     </div>
     """,
     unsafe_allow_html=True,
