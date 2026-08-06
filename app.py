@@ -332,6 +332,22 @@ else:
     st.caption(f"검색 결과: {len(filtered_view):,}건 / 전체 {len(df_display):,}건")
     st.dataframe(filtered_view, use_container_width=True, height=480)
 
+    with st.expander("📊 통계 보기", expanded=False):
+        chart_col1, chart_col2 = st.columns(2)
+        with chart_col1:
+            st.caption("구분별 건수")
+            cat_counts = df_display["구분"].replace("", "미분류").value_counts()
+            st.bar_chart(cat_counts)
+        with chart_col2:
+            st.caption("지역별 건수 (상위 10개)")
+            region_counts = (
+                df_display["지역"].replace("", pd.NA).dropna().value_counts().head(10)
+            )
+            if region_counts.empty:
+                st.caption("지역 정보가 있는 공고가 없습니다.")
+            else:
+                st.bar_chart(region_counts)
+
     if result.excel_path and os.path.exists(result.excel_path):
         with open(result.excel_path, "rb") as f:
             st.download_button(
