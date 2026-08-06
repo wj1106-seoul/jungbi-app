@@ -157,6 +157,18 @@ st.markdown(
     div[data-testid="stCaptionContainer"] {{
         color: #666666 !important;
     }}
+
+    /* 드롭다운(select) 목록을 열었을 때 뜨는 팝업 - 화면 최상단에 별도로 그려지는 부분 */
+    ul[role="listbox"] {{
+        background-color: #FFFFFF !important;
+    }}
+    ul[role="listbox"] li {{
+        background-color: #FFFFFF !important;
+        color: #222222 !important;
+    }}
+    ul[role="listbox"] li:hover {{
+        background-color: {BRAND_ORANGE_LIGHT} !important;
+    }}
     </style>
     """,
     unsafe_allow_html=True,
