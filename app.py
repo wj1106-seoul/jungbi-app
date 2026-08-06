@@ -76,6 +76,16 @@ st.markdown(
     .stButton > button[kind="primary"]:hover {{
         background-color: {BRAND_ORANGE_DARK};
     }}
+    section[data-testid="stSidebar"] .stButton > button {{
+        background-color: {BRAND_ORANGE_LIGHT};
+        color: {BRAND_ORANGE_DARK} !important;
+        border: 1px solid {BRAND_ORANGE};
+        font-weight: 600;
+    }}
+    section[data-testid="stSidebar"] .stButton > button:hover {{
+        background-color: {BRAND_ORANGE};
+        color: #FFFFFF !important;
+    }}
 
     section[data-testid="stSidebar"] {{
         background-color: #FFFFFF;
