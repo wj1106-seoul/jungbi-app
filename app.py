@@ -206,6 +206,57 @@ st.markdown(
 )
 
 # ------------------------------------------------------------------
+# 로그인 (관리자 / 팀원 2단계 비밀번호)
+# ------------------------------------------------------------------
+def get_secret(name: str, default: str = "") -> str:
+    """로컬(.env)과 Streamlit Cloud(secrets) 양쪽 모두 지원."""
+    val = os.environ.get(name, "")
+    if val:
+        return val
+    try:
+        return st.secrets.get(name, default)
+    except Exception:
+        return default
+
+
+ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD")
+TEAM_PASSWORD = get_secret("TEAM_PASSWORD")
+
+if "auth_role" not in st.session_state:
+    st.session_state.auth_role = None
+
+if st.session_state.auth_role is None:
+    st.markdown(
+        """
+        <div class="app-header">
+            <div class="logo">EGA</div>
+            <div class="title-block">
+                <h1>정비사업 입찰공고 수집기</h1>
+                <p>비밀번호를 입력하고 입장해주세요.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    with st.form("login_form"):
+        pw_input = st.text_input("비밀번호", type="password")
+        submitted = st.form_submit_button("입장하기", type="primary", use_container_width=True)
+    if submitted:
+        if ADMIN_PASSWORD and pw_input == ADMIN_PASSWORD:
+            st.session_state.auth_role = "admin"
+            st.rerun()
+        elif TEAM_PASSWORD and pw_input == TEAM_PASSWORD:
+            st.session_state.auth_role = "team"
+            st.rerun()
+        elif not ADMIN_PASSWORD and not TEAM_PASSWORD:
+            st.error("비밀번호가 설정되지 않았습니다. 관리자에게 문의해주세요.")
+        else:
+            st.error("비밀번호가 올바르지 않습니다.")
+    st.stop()
+
+is_admin = st.session_state.auth_role == "admin"
+
+# ------------------------------------------------------------------
 # 세션 상태 초기화
 # ------------------------------------------------------------------
 if "cfg" not in st.session_state:
@@ -224,6 +275,13 @@ def push_log(msg: str):
 # 사이드바 - 실행 옵션 + 필터 편집
 # ------------------------------------------------------------------
 st.sidebar.header("⚙️ 실행 옵션")
+
+role_label = "🔑 관리자" if is_admin else "👤 팀원"
+st.sidebar.caption(f"현재 로그인: {role_label}")
+if st.sidebar.button("로그아웃", use_container_width=True):
+    st.session_state.auth_role = None
+    st.rerun()
+st.sidebar.divider()
 
 def get_service_key() -> str:
     """로컬(.env)과 Streamlit Cloud(secrets) 양쪽 모두 지원."""
@@ -251,36 +309,37 @@ if not yesterday_only:
 
 download_attachments = st.sidebar.checkbox("첨부파일(공고문/지침서) 다운로드", value=True)
 
-st.sidebar.divider()
-st.sidebar.header("🔧 필터 규칙 편집")
-st.sidebar.caption("한 줄에 키워드 하나씩 입력하세요. 저장하면 즉시 다음 실행부터 반영됩니다.")
+if is_admin:
+    st.sidebar.divider()
+    st.sidebar.header("🔧 필터 규칙 편집")
+    st.sidebar.caption("한 줄에 키워드 하나씩 입력하세요. 저장하면 즉시 다음 실행부터 반영됩니다.")
 
-with st.sidebar.expander("발주기관 포함 키워드", expanded=False):
-    inst_text = st.text_area(
-        "institution_include", value="\n".join(st.session_state.cfg["include_institution_keywords"]),
-        height=150, label_visibility="collapsed",
-    )
+    with st.sidebar.expander("발주기관 포함 키워드", expanded=False):
+        inst_text = st.text_area(
+            "institution_include", value="\n".join(st.session_state.cfg["include_institution_keywords"]),
+            height=150, label_visibility="collapsed",
+        )
 
-with st.sidebar.expander("공고명 포함 키워드", expanded=False):
-    title_inc_text = st.text_area(
-        "title_include", value="\n".join(st.session_state.cfg["include_title_keywords"]),
-        height=150, label_visibility="collapsed",
-    )
+    with st.sidebar.expander("공고명 포함 키워드", expanded=False):
+        title_inc_text = st.text_area(
+            "title_include", value="\n".join(st.session_state.cfg["include_title_keywords"]),
+            height=150, label_visibility="collapsed",
+        )
 
-with st.sidebar.expander("공고명 제외 키워드", expanded=False):
-    title_exc_text = st.text_area(
-        "title_exclude", value="\n".join(st.session_state.cfg["exclude_title_keywords"]),
-        height=150, label_visibility="collapsed",
-    )
+    with st.sidebar.expander("공고명 제외 키워드", expanded=False):
+        title_exc_text = st.text_area(
+            "title_exclude", value="\n".join(st.session_state.cfg["exclude_title_keywords"]),
+            height=150, label_visibility="collapsed",
+        )
 
-if st.sidebar.button("💾 필터 규칙 저장", use_container_width=True):
-    cfg = st.session_state.cfg
-    cfg["include_institution_keywords"] = [l.strip() for l in inst_text.splitlines() if l.strip()]
-    cfg["include_title_keywords"] = [l.strip() for l in title_inc_text.splitlines() if l.strip()]
-    cfg["exclude_title_keywords"] = [l.strip() for l in title_exc_text.splitlines() if l.strip()]
-    core.save_config(cfg)
-    st.session_state.cfg = cfg
-    st.sidebar.success("저장되었습니다.")
+    if st.sidebar.button("💾 필터 규칙 저장", use_container_width=True):
+        cfg = st.session_state.cfg
+        cfg["include_institution_keywords"] = [l.strip() for l in inst_text.splitlines() if l.strip()]
+        cfg["include_title_keywords"] = [l.strip() for l in title_inc_text.splitlines() if l.strip()]
+        cfg["exclude_title_keywords"] = [l.strip() for l in title_exc_text.splitlines() if l.strip()]
+        core.save_config(cfg)
+        st.session_state.cfg = cfg
+        st.sidebar.success("저장되었습니다.")
 
 # ------------------------------------------------------------------
 # 메인 화면
