@@ -108,6 +108,16 @@ st.markdown(
         background-color: #FAFAFA !important;
         border: 1px solid #DDDDDD !important;
     }}
+    section[data-testid="stSidebar"] div[data-testid="stNumberInput"] div,
+    section[data-testid="stSidebar"] div[data-testid="stNumberInput"] button {{
+        background-color: #FAFAFA !important;
+        color: #222222 !important;
+    }}
+    section[data-testid="stSidebar"] div[data-testid="stNumberInput"] input {{
+        background-color: #FAFAFA !important;
+        color: #222222 !important;
+        -webkit-text-fill-color: #222222 !important;
+    }}
     section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {{
         color: {BRAND_ORANGE} !important;
     }}
