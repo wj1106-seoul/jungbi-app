@@ -94,6 +94,13 @@ st.markdown(
     section[data-testid="stSidebar"] * {{
         color: #333333;
     }}
+    section[data-testid="stSidebar"] input,
+    section[data-testid="stSidebar"] textarea,
+    section[data-testid="stSidebar"] div[data-baseweb="input"] input,
+    section[data-testid="stSidebar"] div[data-baseweb="select"] * {{
+        color: #222222 !important;
+        -webkit-text-fill-color: #222222 !important;
+    }}
     section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {{
         color: {BRAND_ORANGE} !important;
     }}
@@ -116,6 +123,17 @@ st.markdown(
     }}
 
     .stAlert {{ border-radius: 8px; }}
+
+    div[data-baseweb="input"] input,
+    div[data-baseweb="select"] *,
+    .stNumberInput input,
+    .stTextInput input {{
+        color: #222222 !important;
+        -webkit-text-fill-color: #222222 !important;
+    }}
+    div[data-testid="stCaptionContainer"] {{
+        color: #666666 !important;
+    }}
     </style>
     """,
     unsafe_allow_html=True,
