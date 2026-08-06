@@ -101,6 +101,13 @@ st.markdown(
         color: #222222 !important;
         -webkit-text-fill-color: #222222 !important;
     }}
+    section[data-testid="stSidebar"] textarea,
+    section[data-testid="stSidebar"] div[data-baseweb="input"],
+    section[data-testid="stSidebar"] div[data-baseweb="select"] > div,
+    section[data-testid="stSidebar"] div[data-baseweb="base-input"] {{
+        background-color: #FAFAFA !important;
+        border: 1px solid #DDDDDD !important;
+    }}
     section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {{
         color: {BRAND_ORANGE} !important;
     }}
@@ -130,6 +137,12 @@ st.markdown(
     .stTextInput input {{
         color: #222222 !important;
         -webkit-text-fill-color: #222222 !important;
+    }}
+    div[data-baseweb="input"],
+    div[data-baseweb="select"] > div,
+    div[data-baseweb="base-input"] {{
+        background-color: #FAFAFA !important;
+        border: 1px solid #DDDDDD !important;
     }}
     div[data-testid="stCaptionContainer"] {{
         color: #666666 !important;
