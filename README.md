@@ -1,257 +1,45 @@
-# -*- coding: utf-8 -*-
-"""
-app.py - 정비사업 입찰공고 수집기 사내 웹앱 (Streamlit)
+# 정비사업 입찰공고 수집기 - 사내 웹앱
 
-실행 방법:
-    streamlit run app.py
-그 다음 같은 사내망에 있는 다른 PC에서 http://<이 PC의 IP>:8501 로 접속하면 됩니다.
-"""
-import os
-import json
-from datetime import datetime
-from pathlib import Path
+기존 collector_v2.py 스크립트를 사내에서 여러 명이 브라우저로 같이 쓸 수 있도록
+웹 화면(Streamlit)을 씌운 버전입니다. 핵심 수집/필터링/엑셀 생성 로직은 원본과 동일합니다.
 
-import streamlit as st
-import pandas as pd
+## 폴더 구성
 
-import collector_core as core
+app/
+  app.py              웹 화면 (Streamlit)
+  collector_core.py   핵심 로직 (API 호출/필터링/분류/엑셀 생성)
+  config.json         필터 키워드 설정 (웹 화면에서 편집하면 이 파일이 갱신됨)
+  .env                SERVICE_KEY 등 비밀값 (직접 만들어야 함, git에 올리지 말 것)
+  .env.example        .env 작성 예시
+  requirements.txt    필요 패키지 목록
+  logs/               실행 로그 (자동 생성)
+  output/             결과 엑셀 / 첨부파일 다운로드 폴더 (자동 생성)
 
-st.set_page_config(page_title="정비사업 입찰공고 수집기", page_icon="🏗️", layout="wide")
+## 처음 설치 (사내 PC 한 대에서)
 
-BASE_DIR = Path(__file__).resolve().parent
+1. Python 3.9 이상이 설치되어 있어야 합니다.
+2. 이 app 폴더를 사내에 항상 켜져 있는 PC(또는 서버)에 복사합니다.
+3. 터미널(명령 프롬프트)에서: cd app 그 다음 pip install -r requirements.txt
+4. .env.example을 복사해서 .env로 이름을 바꾸고, 공공데이터포털에서 발급받은 SERVICE_KEY 값을 채워 넣습니다.
+5. curl.exe를 이용한 회사망 우회가 필요한 환경이라면, 이 PC에도 curl이 PATH에 있어야 합니다. Windows 10/11은 기본 내장되어 있어 별도 설치가 필요 없습니다.
 
-# ------------------------------------------------------------------
-# 디자인 (커스텀 CSS) - 사내 인트라넷(EGA) 톤에 맞춘 오렌지 테마
-# ------------------------------------------------------------------
-BRAND_ORANGE = "#E8590C"
-BRAND_ORANGE_DARK = "#C94E0B"
-BRAND_ORANGE_LIGHT = "#FFF1E8"
+## 실행
 
-st.markdown(
-    f"""
-    <style>
-    .stApp {{ background-color: #F4F5F7; }}
-    .main .block-container {{ padding-top: 1.5rem; max-width: 1200px; }}
+streamlit run app.py
 
-    .app-header {{
-        background-color: #FFFFFF;
-        border-bottom: 4px solid {BRAND_ORANGE};
-        padding: 20px 28px;
-        border-radius: 10px;
-        margin-bottom: 24px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.06);
-        display: flex;
-        align-items: center;
-        gap: 16px;
-    }}
-    .app-header .logo {{
-        font-size: 30px; font-weight: 800; color: {BRAND_ORANGE};
-        letter-spacing: 1px; line-height: 1;
-    }}
-    .app-header .title-block h1 {{
-        color: #222222; font-size: 22px; margin: 0 0 4px 0; font-weight: 700;
-    }}
-    .app-header .title-block p {{
-        color: #666666; font-size: 13px; margin: 0;
-    }}
+실행하면 터미널에 Local URL과 Network URL 주소가 나타납니다.
 
-    div[data-testid="stMetric"] {{
-        background-color: #FFFFFF;
-        border: 1px solid #EEEEEE;
-        border-left: 4px solid {BRAND_ORANGE};
-        border-radius: 8px;
-        padding: 14px 18px;
-        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
-    }}
-    div[data-testid="stMetricLabel"] {{ color: #888888; }}
-    div[data-testid="stMetricValue"] {{ color: #222222; }}
+- 이 PC에서 직접 보려면 Local URL을 브라우저에 입력합니다.
+- 사내 다른 사람들이 접속하려면 Network URL(사내 IP 주소)을 알려주면 됩니다.
 
-    .stButton > button[kind="primary"] {{
-        background-color: {BRAND_ORANGE};
-        border: none;
-        font-weight: 600;
-        border-radius: 6px;
-        color: #FFFFFF;
-    }}
-    .stButton > button[kind="primary"]:hover {{
-        background-color: {BRAND_ORANGE_DARK};
-    }}
+## 화면 사용법
 
-    section[data-testid="stSidebar"] {{
-        background-color: #FFFFFF;
-        border-right: 1px solid #EEEEEE;
-    }}
-    section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {{
-        color: {BRAND_ORANGE};
-    }}
+- 지금 수집하기 버튼: 그 시점 기준으로 API를 조회해서 결과를 화면에 보여주고 엑셀로도 저장합니다.
+- 왼쪽 사이드바 - 실행 옵션: 조회 기간, 첨부파일 다운로드 여부를 그때그때 바꿀 수 있습니다.
+- 왼쪽 사이드바 - 필터 규칙 편집: 발주기관/공고명 포함·제외 키워드를 코드 수정 없이 텍스트로 바로 고칠 수 있습니다.
+- 엑셀 다운로드 버튼: 결과가 나오면 엑셀 파일을 다운로드할 수 있습니다.
+- 실행 로그: 실행 중 무슨 일이 있었는지 실시간으로 보여줍니다.
 
-    div[data-testid="stExpander"] {{
-        background-color: #FFFFFF;
-        border: 1px solid #EEEEEE !important;
-        border-radius: 8px;
-    }}
+## 원본과 달라진 점 (요약)
 
-    div[data-testid="stDataFrame"] {{
-        border: 1px solid #EEEEEE;
-        border-radius: 8px;
-    }}
-
-    .stAlert {{ border-radius: 8px; }}
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ------------------------------------------------------------------
-# 세션 상태 초기화
-# ------------------------------------------------------------------
-if "cfg" not in st.session_state:
-    st.session_state.cfg = core.load_config()
-if "log_lines" not in st.session_state:
-    st.session_state.log_lines = []
-if "last_result" not in st.session_state:
-    st.session_state.last_result = None
-
-
-def push_log(msg: str):
-    st.session_state.log_lines.append(msg)
-
-
-# ------------------------------------------------------------------
-# 사이드바 - 실행 옵션 + 필터 편집
-# ------------------------------------------------------------------
-st.sidebar.header("⚙️ 실행 옵션")
-
-def get_service_key() -> str:
-    """로컬(.env)과 Streamlit Cloud(secrets) 양쪽 모두 지원."""
-    key = os.environ.get("SERVICE_KEY", "")
-    if key:
-        return key
-    try:
-        return st.secrets.get("SERVICE_KEY", "")
-    except Exception:
-        return ""
-
-
-service_key = get_service_key()
-if not service_key:
-    st.sidebar.error(
-        "SERVICE_KEY가 설정되지 않았습니다.\n"
-        "로컬 실행: .env 파일 확인 / Streamlit Cloud: Secrets 설정 확인"
-    )
-
-period_mode = st.sidebar.radio("조회 기간", ["직전 영업일만", "최근 N일"], index=0)
-yesterday_only = period_mode == "직전 영업일만"
-days_back = 1
-if not yesterday_only:
-    days_back = st.sidebar.number_input("최근 며칠", min_value=1, max_value=30, value=3)
-
-download_attachments = st.sidebar.checkbox("첨부파일(공고문/지침서) 다운로드", value=True)
-
-st.sidebar.divider()
-st.sidebar.header("🔧 필터 규칙 편집")
-st.sidebar.caption("한 줄에 키워드 하나씩 입력하세요. 저장하면 즉시 다음 실행부터 반영됩니다.")
-
-with st.sidebar.expander("발주기관 포함 키워드", expanded=False):
-    inst_text = st.text_area(
-        "institution_include", value="\n".join(st.session_state.cfg["include_institution_keywords"]),
-        height=150, label_visibility="collapsed",
-    )
-
-with st.sidebar.expander("공고명 포함 키워드", expanded=False):
-    title_inc_text = st.text_area(
-        "title_include", value="\n".join(st.session_state.cfg["include_title_keywords"]),
-        height=150, label_visibility="collapsed",
-    )
-
-with st.sidebar.expander("공고명 제외 키워드", expanded=False):
-    title_exc_text = st.text_area(
-        "title_exclude", value="\n".join(st.session_state.cfg["exclude_title_keywords"]),
-        height=150, label_visibility="collapsed",
-    )
-
-if st.sidebar.button("💾 필터 규칙 저장", use_container_width=True):
-    cfg = st.session_state.cfg
-    cfg["include_institution_keywords"] = [l.strip() for l in inst_text.splitlines() if l.strip()]
-    cfg["include_title_keywords"] = [l.strip() for l in title_inc_text.splitlines() if l.strip()]
-    cfg["exclude_title_keywords"] = [l.strip() for l in title_exc_text.splitlines() if l.strip()]
-    core.save_config(cfg)
-    st.session_state.cfg = cfg
-    st.sidebar.success("저장되었습니다.")
-
-# ------------------------------------------------------------------
-# 메인 화면
-# ------------------------------------------------------------------
-st.markdown(
-    """
-    <div class="app-header">
-        <div class="logo">EGA</div>
-        <div class="title-block">
-            <h1>정비사업 입찰공고 수집기</h1>
-            <p>누리장터 민간입찰공고 중 정비사업 관련 기술용역 공고만 자동으로 걸러서 보여줍니다.</p>
-        </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-col_run, col_status = st.columns([1, 4])
-with col_run:
-    run_clicked = st.button("🚀 지금 수집하기", type="primary", use_container_width=True)
-
-status_placeholder = st.empty()
-log_box = st.expander("실행 로그", expanded=run_clicked)
-
-if run_clicked:
-    st.session_state.log_lines = []
-    log_area = log_box.empty()
-
-    def progress_cb(msg: str):
-        push_log(msg)
-        log_area.code("\n".join(st.session_state.log_lines[-200:]))
-
-    with st.spinner("공고를 조회하고 필터링하는 중입니다..."):
-        result = core.run_pipeline(
-            service_key=service_key,
-            cfg=st.session_state.cfg,
-            yesterday_only=yesterday_only,
-            days_back=days_back,
-            download_attachments=download_attachments,
-            progress_cb=progress_cb,
-        )
-    st.session_state.last_result = result
-
-result = st.session_state.last_result
-
-if result is None:
-    status_placeholder.info("아직 실행하지 않았습니다. '지금 수집하기'를 눌러 시작하세요.")
-elif not result.ok:
-    status_placeholder.warning(result.message)
-else:
-    m1, m2, m3 = st.columns(3)
-    m1.metric("기준일", f"{result.title_date:%Y-%m-%d}")
-    m2.metric("API 조회 건수", f"{result.raw_count:,}건")
-    m3.metric("필터 통과 건수", f"{len(result.filtered_df):,}건")
-
-    st.write("")
-    df_display = result.filtered_df.drop(columns=["폴더명"], errors="ignore")
-    st.dataframe(df_display, use_container_width=True, height=480)
-
-    if result.excel_path and os.path.exists(result.excel_path):
-        with open(result.excel_path, "rb") as f:
-            st.download_button(
-                "📥 엑셀 파일 다운로드",
-                data=f.read(),
-                file_name=os.path.basename(result.excel_path),
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-
-st.divider()
-with st.expander("📜 최근 실행 로그 파일 보기"):
-    log_files = sorted(core.LOG_DIR.glob("collector_*.log"), reverse=True)
-    if not log_files:
-        st.caption("아직 로그 파일이 없습니다.")
-    else:
-        chosen = st.selectbox("로그 파일 선택", [f.name for f in log_files])
-        chosen_path = core.LOG_DIR / chosen
-        st.code(chosen_path.read_text(encoding="utf-8")[-8000:])
+SERVICE_KEY는 .env 파일로 분리했고, 필터 키워드는 config.json과 웹 화면 편집으로 바꿨고, API 실패 시 재시도 로직을 추가했고, 실행 결과는 웹 화면과 로그 파일로 확인 가능하며, 실행 방식은 브라우저 버튼 클릭으로 누구나 가능하게 바뀌었습니다. 핵심 로직(필터링/분류/엑셀 서식)은 원본과 완전히 동일합니다.
