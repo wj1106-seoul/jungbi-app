@@ -81,14 +81,23 @@ st.markdown(
         background-color: #FFFFFF;
         border-right: 1px solid #EEEEEE;
     }}
+    section[data-testid="stSidebar"] * {{
+        color: #333333;
+    }}
     section[data-testid="stSidebar"] h2, section[data-testid="stSidebar"] h3 {{
-        color: {BRAND_ORANGE};
+        color: {BRAND_ORANGE} !important;
+    }}
+    section[data-testid="stSidebar"] .stAlert p {{
+        color: inherit;
     }}
 
     div[data-testid="stExpander"] {{
         background-color: #FFFFFF;
         border: 1px solid #EEEEEE !important;
         border-radius: 8px;
+    }}
+    div[data-testid="stExpander"] summary {{
+        color: #333333 !important;
     }}
 
     div[data-testid="stDataFrame"] {{
