@@ -170,6 +170,36 @@ st.markdown(
     ul[role="listbox"] li:hover {{
         background-color: {BRAND_ORANGE_LIGHT} !important;
     }}
+
+    /* 모바일(좁은 화면) 최적화 */
+    @media (max-width: 640px) {{
+        .main .block-container {{
+            padding-left: 1rem;
+            padding-right: 1rem;
+            padding-top: 1rem;
+        }}
+        .app-header {{
+            flex-direction: column;
+            align-items: flex-start;
+            padding: 16px 18px;
+            gap: 8px;
+        }}
+        .app-header .logo {{
+            font-size: 22px;
+        }}
+        .app-header .title-block h1 {{
+            font-size: 17px;
+        }}
+        .app-header .title-block p {{
+            font-size: 12px;
+        }}
+        div[data-testid="stMetric"] {{
+            padding: 10px 12px;
+        }}
+        div[data-testid="stMetricValue"] {{
+            font-size: 20px;
+        }}
+    }}
     </style>
     """,
     unsafe_allow_html=True,
