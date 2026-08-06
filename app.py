@@ -254,7 +254,30 @@ else:
 
     st.write("")
     df_display = result.filtered_df.drop(columns=["폴더명"], errors="ignore")
-    st.dataframe(df_display, use_container_width=True, height=480)
+
+    search_col, cat_col = st.columns([3, 1])
+    with search_col:
+        search_text = st.text_input(
+            "🔍 검색 (발주기관, 지역, 공고명, 비고 등에서 검색)",
+            value="",
+            placeholder="예: 서울, CM, 강남구, 신탁 ...",
+        )
+    with cat_col:
+        cat_options = ["전체"] + sorted(df_display["구분"].dropna().unique().tolist())
+        cat_selected = st.selectbox("구분 필터", cat_options)
+
+    filtered_view = df_display.copy()
+    if cat_selected != "전체":
+        filtered_view = filtered_view[filtered_view["구분"] == cat_selected]
+    if search_text.strip():
+        keyword = search_text.strip()
+        mask = filtered_view.astype(str).apply(
+            lambda col: col.str.contains(keyword, case=False, na=False)
+        ).any(axis=1)
+        filtered_view = filtered_view[mask]
+
+    st.caption(f"검색 결과: {len(filtered_view):,}건 / 전체 {len(df_display):,}건")
+    st.dataframe(filtered_view, use_container_width=True, height=480)
 
     if result.excel_path and os.path.exists(result.excel_path):
         with open(result.excel_path, "rb") as f:
