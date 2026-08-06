@@ -13,6 +13,7 @@ from pathlib import Path
 
 import streamlit as st
 import pandas as pd
+import altair as alt
 
 import collector_core as core
 
@@ -333,11 +334,26 @@ else:
     st.dataframe(filtered_view, use_container_width=True, height=480)
 
     with st.expander("📊 통계 보기", expanded=False):
+        def horizontal_bar(series: pd.Series, label_name: str):
+            chart_df = series.reset_index()
+            chart_df.columns = [label_name, "건수"]
+            chart = (
+                alt.Chart(chart_df)
+                .mark_bar(color=BRAND_ORANGE)
+                .encode(
+                    x=alt.X("건수:Q", axis=alt.Axis(tickMinStep=1, format="d")),
+                    y=alt.Y(f"{label_name}:N", sort="-x", title=None),
+                    tooltip=[label_name, "건수"],
+                )
+                .properties(height=max(120, 32 * len(chart_df)))
+            )
+            st.altair_chart(chart, use_container_width=True)
+
         chart_col1, chart_col2 = st.columns(2)
         with chart_col1:
             st.caption("구분별 건수")
             cat_counts = df_display["구분"].replace("", "미분류").value_counts()
-            st.bar_chart(cat_counts)
+            horizontal_bar(cat_counts, "구분")
         with chart_col2:
             st.caption("지역별 건수 (상위 10개)")
             region_counts = (
@@ -346,7 +362,7 @@ else:
             if region_counts.empty:
                 st.caption("지역 정보가 있는 공고가 없습니다.")
             else:
-                st.bar_chart(region_counts)
+                horizontal_bar(region_counts, "지역")
 
     if result.excel_path and os.path.exists(result.excel_path):
         with open(result.excel_path, "rb") as f:
