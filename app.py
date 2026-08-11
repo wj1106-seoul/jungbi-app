@@ -172,6 +172,21 @@ st.markdown(
         background-color: {BRAND_ORANGE_LIGHT} !important;
     }}
 
+    /* 탭(오늘의 공고 수집 / 조합별 이력 조회) 글씨 크게 */
+    .stTabs [data-baseweb="tab-list"] button {{
+        padding: 10px 20px;
+    }}
+    .stTabs [data-baseweb="tab-list"] button p {{
+        font-size: 18px !important;
+        font-weight: 700 !important;
+    }}
+    .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] p {{
+        color: {BRAND_ORANGE} !important;
+    }}
+    .stTabs [data-baseweb="tab-highlight"] {{
+        background-color: {BRAND_ORANGE} !important;
+    }}
+
     /* 모바일(좁은 화면) 최적화 */
     @media (max-width: 640px) {{
         .main .block-container {{
