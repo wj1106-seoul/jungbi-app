@@ -173,18 +173,19 @@ st.markdown(
     }}
 
     /* 탭(오늘의 공고 수집 / 조합별 이력 조회) 글씨 크게 */
-    .stTabs [data-baseweb="tab-list"] button {{
-        padding: 10px 20px;
+    div[data-baseweb="tab-list"] button {{
+        padding: 10px 22px !important;
     }}
-    .stTabs [data-baseweb="tab-list"] button p {{
-        font-size: 18px !important;
-        font-weight: 700 !important;
+    div[data-baseweb="tab-list"] button * {{
+        font-size: 20px !important;
+        font-weight: 800 !important;
     }}
-    .stTabs [data-baseweb="tab-list"] button[aria-selected="true"] p {{
+    div[data-baseweb="tab-list"] button[aria-selected="true"] * {{
         color: {BRAND_ORANGE} !important;
     }}
-    .stTabs [data-baseweb="tab-highlight"] {{
+    div[data-baseweb="tab-highlight"] {{
         background-color: {BRAND_ORANGE} !important;
+        height: 3px !important;
     }}
 
     /* 모바일(좁은 화면) 최적화 */
