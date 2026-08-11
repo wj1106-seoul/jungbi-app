@@ -358,144 +358,225 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-col_run, col_status = st.columns([1, 4])
-with col_run:
-    run_clicked = st.button("🚀 지금 수집하기", type="primary", use_container_width=True)
+tab1, tab2 = st.tabs(["📅 오늘의 공고 수집", "🏢 조합별 이력 조회"])
 
-status_placeholder = st.empty()
-log_box = st.expander("실행 로그", expanded=run_clicked)
+with tab1:
+    col_run, col_status = st.columns([1, 4])
+    with col_run:
+        run_clicked = st.button("🚀 지금 수집하기", type="primary", use_container_width=True)
 
-if run_clicked:
-    st.session_state.log_lines = []
-    log_area = log_box.empty()
+    status_placeholder = st.empty()
+    log_box = st.expander("실행 로그", expanded=run_clicked)
 
-    def progress_cb(msg: str):
-        push_log(msg)
-        log_area.code("\n".join(st.session_state.log_lines[-200:]))
+    if run_clicked:
+        st.session_state.log_lines = []
+        log_area = log_box.empty()
 
-    with st.spinner("공고를 조회하고 필터링하는 중입니다..."):
-        result = core.run_pipeline(
-            service_key=service_key,
-            cfg=st.session_state.cfg,
-            yesterday_only=yesterday_only,
-            days_back=days_back,
-            download_attachments=download_attachments,
-            progress_cb=progress_cb,
-        )
-    st.session_state.last_result = result
+        def progress_cb(msg: str):
+            push_log(msg)
+            log_area.code("\n".join(st.session_state.log_lines[-200:]))
 
-result = st.session_state.last_result
+        with st.spinner("공고를 조회하고 필터링하는 중입니다..."):
+            result = core.run_pipeline(
+                service_key=service_key,
+                cfg=st.session_state.cfg,
+                yesterday_only=yesterday_only,
+                days_back=days_back,
+                download_attachments=download_attachments,
+                progress_cb=progress_cb,
+            )
+        st.session_state.last_result = result
 
-if result is None:
-    status_placeholder.info("아직 실행하지 않았습니다. '지금 수집하기'를 눌러 시작하세요.")
-elif not result.ok:
-    status_placeholder.warning(result.message)
-else:
-    m1, m2, m3 = st.columns(3)
-    m1.metric("기준일", f"{result.title_date:%Y-%m-%d}")
-    m2.metric("API 조회 건수", f"{result.raw_count:,}건")
-    m3.metric("필터 통과 건수", f"{len(result.filtered_df):,}건")
+    result = st.session_state.last_result
 
-    st.write("")
-    df_display = result.filtered_df.drop(columns=["폴더명"], errors="ignore")
+    if result is None:
+        status_placeholder.info("아직 실행하지 않았습니다. '지금 수집하기'를 눌러 시작하세요.")
+    elif not result.ok:
+        status_placeholder.warning(result.message)
+    else:
+        m1, m2, m3 = st.columns(3)
+        m1.metric("기준일", f"{result.title_date:%Y-%m-%d}")
+        m2.metric("API 조회 건수", f"{result.raw_count:,}건")
+        m3.metric("필터 통과 건수", f"{len(result.filtered_df):,}건")
 
-    search_col, cat_col = st.columns([3, 1])
-    with search_col:
-        search_text = st.text_input(
-            "🔍 검색 (발주기관, 지역, 공고명, 비고 등에서 검색)",
-            value="",
-            placeholder="예: 서울, CM, 강남구, 신탁 ...",
-        )
-    with cat_col:
-        cat_options = ["전체"] + sorted(df_display["구분"].dropna().unique().tolist())
-        cat_selected = st.selectbox("구분 필터", cat_options)
+        st.write("")
+        df_display = result.filtered_df.drop(columns=["폴더명"], errors="ignore")
 
-    filtered_view = df_display.copy()
-    if cat_selected != "전체":
-        filtered_view = filtered_view[filtered_view["구분"] == cat_selected]
-    if search_text.strip():
-        keyword = search_text.strip()
-        mask = filtered_view.astype(str).apply(
-            lambda col: col.str.contains(keyword, case=False, na=False)
-        ).any(axis=1)
-        filtered_view = filtered_view[mask]
+        search_col, cat_col = st.columns([3, 1])
+        with search_col:
+            search_text = st.text_input(
+                "🔍 검색 (발주기관, 지역, 공고명, 비고 등에서 검색)",
+                value="",
+                placeholder="예: 서울, CM, 강남구, 신탁 ...",
+            )
+        with cat_col:
+            cat_options = ["전체"] + sorted(df_display["구분"].dropna().unique().tolist())
+            cat_selected = st.selectbox("구분 필터", cat_options)
 
-    st.caption(f"검색 결과: {len(filtered_view):,}건 / 전체 {len(df_display):,}건")
-    st.dataframe(filtered_view, use_container_width=True, height=480)
+        filtered_view = df_display.copy()
+        if cat_selected != "전체":
+            filtered_view = filtered_view[filtered_view["구분"] == cat_selected]
+        if search_text.strip():
+            keyword = search_text.strip()
+            mask = filtered_view.astype(str).apply(
+                lambda col: col.str.contains(keyword, case=False, na=False)
+            ).any(axis=1)
+            filtered_view = filtered_view[mask]
 
-    with st.expander("📊 통계 보기", expanded=False):
-        def horizontal_bar(series: pd.Series, label_name: str):
-            chart_df = series.reset_index()
-            chart_df.columns = [label_name, "건수"]
-            chart = (
-                alt.Chart(chart_df)
-                .mark_bar(color=BRAND_ORANGE)
-                .encode(
-                    x=alt.X("건수:Q", axis=alt.Axis(tickMinStep=1, format="d")),
-                    y=alt.Y(f"{label_name}:N", sort="-x", title=None),
-                    tooltip=[label_name, "건수"],
+        st.caption(f"검색 결과: {len(filtered_view):,}건 / 전체 {len(df_display):,}건")
+        st.dataframe(filtered_view, use_container_width=True, height=480)
+
+        with st.expander("📊 통계 보기", expanded=False):
+            def horizontal_bar(series: pd.Series, label_name: str):
+                chart_df = series.reset_index()
+                chart_df.columns = [label_name, "건수"]
+                chart = (
+                    alt.Chart(chart_df)
+                    .mark_bar(color=BRAND_ORANGE)
+                    .encode(
+                        x=alt.X("건수:Q", axis=alt.Axis(tickMinStep=1, format="d")),
+                        y=alt.Y(f"{label_name}:N", sort="-x", title=None),
+                        tooltip=[label_name, "건수"],
+                    )
+                    .properties(height=max(120, 32 * len(chart_df)))
                 )
-                .properties(height=max(120, 32 * len(chart_df)))
-            )
-            st.altair_chart(chart, use_container_width=True)
+                st.altair_chart(chart, use_container_width=True)
 
-        chart_col1, chart_col2 = st.columns(2)
-        with chart_col1:
-            st.caption("구분별 건수")
-            cat_counts = df_display["구분"].replace("", "미분류").value_counts()
-            horizontal_bar(cat_counts, "구분")
-        with chart_col2:
-            st.caption("지역별 건수 (상위 10개)")
-            region_counts = (
-                df_display["지역"].replace("", pd.NA).dropna().value_counts().head(10)
-            )
-            if region_counts.empty:
-                st.caption("지역 정보가 있는 공고가 없습니다.")
-            else:
-                horizontal_bar(region_counts, "지역")
+            chart_col1, chart_col2 = st.columns(2)
+            with chart_col1:
+                st.caption("구분별 건수")
+                cat_counts = df_display["구분"].replace("", "미분류").value_counts()
+                horizontal_bar(cat_counts, "구분")
+            with chart_col2:
+                st.caption("지역별 건수 (상위 10개)")
+                region_counts = (
+                    df_display["지역"].replace("", pd.NA).dropna().value_counts().head(10)
+                )
+                if region_counts.empty:
+                    st.caption("지역 정보가 있는 공고가 없습니다.")
+                else:
+                    horizontal_bar(region_counts, "지역")
 
-    if result.excel_path and os.path.exists(result.excel_path):
-        with open(result.excel_path, "rb") as f:
-            st.download_button(
-                "📥 엑셀 파일 다운로드",
-                data=f.read(),
-                file_name=os.path.basename(result.excel_path),
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-
-    attachment_dir_path = core.DEFAULT_ATTACHMENT_DIR
-    if attachment_dir_path.exists() and any(attachment_dir_path.iterdir()):
-        with st.expander("📎 공고문/지침서 다운로드", expanded=False):
-            zip_base = str(BASE_DIR / "output" / "공고문_첨부파일")
-            zip_path = shutil.make_archive(zip_base, "zip", root_dir=str(attachment_dir_path))
-            with open(zip_path, "rb") as f:
+        if result.excel_path and os.path.exists(result.excel_path):
+            with open(result.excel_path, "rb") as f:
                 st.download_button(
-                    "⬇️ 전체 한 번에 다운로드 (zip)",
+                    "📥 엑셀 파일 다운로드",
                     data=f.read(),
-                    file_name="공고문_첨부파일.zip",
-                    mime="application/zip",
-                    use_container_width=True,
+                    file_name=os.path.basename(result.excel_path),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
-            st.divider()
-            st.caption("또는 필요한 파일만 하나씩 받으실 수 있습니다.")
 
-            folders = sorted([f for f in attachment_dir_path.iterdir() if f.is_dir()])
-            if not folders:
-                st.caption("다운로드된 첨부파일이 없습니다.")
-            for folder in folders:
-                files = sorted([f for f in folder.glob("*") if f.is_file()])
-                if not files:
-                    continue
-                st.markdown(f"**{folder.name}**")
-                for f in files:
-                    with open(f, "rb") as fh:
-                        st.download_button(
-                            f.name,
-                            data=fh.read(),
-                            file_name=f.name,
-                            key=f"dl_{folder.name}_{f.name}",
-                        )
-                st.write("")
+        attachment_dir_path = core.DEFAULT_ATTACHMENT_DIR
+        if attachment_dir_path.exists() and any(attachment_dir_path.iterdir()):
+            with st.expander("📎 공고문/지침서 다운로드", expanded=False):
+                zip_base = str(BASE_DIR / "output" / "공고문_첨부파일")
+                zip_path = shutil.make_archive(zip_base, "zip", root_dir=str(attachment_dir_path))
+                with open(zip_path, "rb") as f:
+                    st.download_button(
+                        "⬇️ 전체 한 번에 다운로드 (zip)",
+                        data=f.read(),
+                        file_name="공고문_첨부파일.zip",
+                        mime="application/zip",
+                        use_container_width=True,
+                    )
+                st.divider()
+                st.caption("또는 필요한 파일만 하나씩 받으실 수 있습니다.")
+
+                folders = sorted([f for f in attachment_dir_path.iterdir() if f.is_dir()])
+                if not folders:
+                    st.caption("다운로드된 첨부파일이 없습니다.")
+                for folder in folders:
+                    files = sorted([f for f in folder.glob("*") if f.is_file()])
+                    if not files:
+                        continue
+                    st.markdown(f"**{folder.name}**")
+                    for f in files:
+                        with open(f, "rb") as fh:
+                            st.download_button(
+                                f.name,
+                                data=fh.read(),
+                                file_name=f.name,
+                                key=f"dl_{folder.name}_{f.name}",
+                            )
+                    st.write("")
+
+with tab2:
+    st.markdown(
+        """
+        <p style="color:#555555; font-size:14px; margin-top:-8px;">
+        특정 발주기관(조합/신탁사 등) 이름으로, 지정한 기간 전체에서 기술용역(CM/PM/설계/감리 등) 공고를 모두 찾아드립니다.
+        </p>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    hist_col1, hist_col2, hist_col3 = st.columns([2, 1, 1])
+    with hist_col1:
+        institution_keyword = st.text_input(
+            "발주기관 이름(일부만 입력해도 됩니다)",
+            placeholder="예: 마포로5구역제2지구, OO신탁, OO조합 ...",
+        )
+    with hist_col2:
+        years_back = st.number_input("조회 기간(년)", min_value=0.1, max_value=5.0, value=1.0, step=0.5)
+    with hist_col3:
+        hist_biz_types = st.multiselect(
+            "업무구분", ["용역", "공사", "물품", "기타"], default=["용역"],
+        )
+
+    est_calls = core.estimate_institution_search_calls(years_back, hist_biz_types or ["용역"])
+    st.caption(
+        f"⏱️ 예상 API 호출 횟수: 약 {est_calls}회 — 기간이 길수록 오래 걸립니다 "
+        f"(1년 기준 대략 5~15분, 5년이면 수십 분 이상 걸릴 수 있어요)."
+    )
+
+    hist_run = st.button("🔎 이력 조회하기", type="primary", use_container_width=True)
+    hist_status = st.empty()
+    hist_log_box = st.expander("조회 로그", expanded=hist_run)
+
+    if hist_run:
+        if not institution_keyword.strip():
+            hist_status.warning("발주기관 이름(키워드)을 먼저 입력해주세요.")
+        else:
+            hist_log_lines = []
+            hist_log_area = hist_log_box.empty()
+
+            def hist_progress_cb(msg: str):
+                hist_log_lines.append(msg)
+                hist_log_area.code("\n".join(hist_log_lines[-300:]))
+
+            with st.spinner(f"'{institution_keyword}' 관련 공고를 최근 {years_back}년치 뒤지는 중입니다... 시간이 걸릴 수 있어요."):
+                hist_result = core.search_by_institution(
+                    institution_keyword,
+                    service_key=service_key,
+                    cfg=st.session_state.cfg,
+                    years_back=years_back,
+                    biz_types=hist_biz_types or ["용역"],
+                    progress_cb=hist_progress_cb,
+                )
+            st.session_state.hist_result = hist_result
+
+    hist_result = st.session_state.get("hist_result")
+
+    if hist_result is None:
+        hist_status.info("발주기관 이름을 입력하고 '이력 조회하기'를 눌러 시작하세요.")
+    elif not hist_result.ok:
+        hist_status.warning(hist_result.message)
+    else:
+        hc1, hc2 = st.columns(2)
+        hc1.metric("API 조회 건수", f"{hist_result.raw_count:,}건")
+        hc2.metric("필터 통과 건수", f"{len(hist_result.filtered_df):,}건")
+
+        st.write("")
+        st.dataframe(hist_result.filtered_df, use_container_width=True, height=480)
+
+        if hist_result.excel_path and os.path.exists(hist_result.excel_path):
+            with open(hist_result.excel_path, "rb") as f:
+                st.download_button(
+                    "📥 엑셀 파일 다운로드",
+                    data=f.read(),
+                    file_name=os.path.basename(hist_result.excel_path),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
 
 st.divider()
 with st.expander("📜 최근 실행 로그 파일 보기"):

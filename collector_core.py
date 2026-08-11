@@ -1157,3 +1157,172 @@ def run_pipeline(
         ok=True,
         message=f"필터 통과 {len(df_out)}건",
     )
+
+
+# ---------------------------- [신규] 특정 발주기관 이력 조회 ----------------------------
+# "A조합 5년치 전부 정리해줘"처럼, 하루/최근N일이 아니라 특정 발주기관을 기준으로
+# 훨씬 긴 기간을 뒤져서 모아보는 별도 기능. 서버가 발주기관으로 걸러주지 않기 때문에
+# 그 기간 전체 데이터를 CHUNK_DAYS(3일) 단위로 잘게 쪼개 반복 조회합니다.
+# (기간이 길수록 호출 횟수가 많아져 시간이 오래 걸릴 수 있습니다)
+
+@dataclass
+class InstitutionSearchResult:
+    raw_count: int = 0
+    filtered_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    excel_path: Optional[str] = None
+    ok: bool = True
+    message: str = ""
+
+
+def estimate_institution_search_calls(years_back: float, biz_types: list) -> int:
+    """조회 전에 대략 몇 번 API를 호출하게 될지 미리 알려주기 위한 추정치"""
+    total_days = int(365 * years_back)
+    chunk_count = max(1, -(-total_days // CHUNK_DAYS))  # 올림 나눗셈
+    return chunk_count * len(biz_types)
+
+
+def search_by_institution(
+    keyword: str,
+    service_key: str,
+    cfg: dict,
+    *,
+    years_back: float = 1,
+    biz_types: Optional[list] = None,
+    excel_dir: Optional[str] = None,
+    progress_cb: Optional[Callable[[str], None]] = None,
+) -> InstitutionSearchResult:
+    """
+    특정 발주기관(조합/신탁사 등) 이름이 포함된 공고를 지정 기간(years_back년) 동안
+    전부 찾아서, 지금 쓰는 것과 동일한 기술용역(CM/PM/설계/감리 등) 필터를 적용해 반환.
+    """
+    keyword = keyword.strip()
+    if not keyword:
+        return InstitutionSearchResult(ok=False, message="발주기관 이름(키워드)을 입력해주세요.")
+    if not service_key:
+        return InstitutionSearchResult(ok=False, message="SERVICE_KEY가 설정되지 않았습니다.")
+
+    biz_types = biz_types or cfg.get("biz_types", ["용역"])
+    end_dt = datetime.now()
+    start_dt = end_dt - timedelta(days=int(365 * years_back))
+
+    chunks = []
+    cur = start_dt
+    while cur < end_dt:
+        chunk_end = min(cur + timedelta(days=CHUNK_DAYS), end_dt)
+        chunks.append((cur, chunk_end))
+        cur = chunk_end
+
+    total_chunks = len(chunks) * len(biz_types)
+    _emit(
+        progress_cb,
+        f"조회 기간: {start_dt:%Y-%m-%d} ~ {end_dt:%Y-%m-%d} "
+        f"({len(chunks)}개 구간 x {len(biz_types)}개 업무구분 = 총 {total_chunks}회 조회 예정)",
+    )
+
+    all_items = []
+    done = 0
+    for biz_type in biz_types:
+        operation = OPERATION_BY_BIZ[biz_type]
+        for b, e in chunks:
+            done += 1
+            if done % 5 == 0 or done == total_chunks:
+                _emit(progress_cb, f"  [{done}/{total_chunks}] [{biz_type}] {b:%Y-%m-%d}~{e:%Y-%m-%d} 조회 중...")
+            page_no = 1
+            while True:
+                try:
+                    items, total_count = fetch_one_page(operation, b, e, page_no, service_key, progress_cb=progress_cb)
+                except RuntimeError as ex:
+                    _emit(progress_cb, f"    [!] 오류(이 구간 건너뜀): {ex}", "warning")
+                    break
+                if not items:
+                    break
+                for it in items:
+                    it["_업무구분"] = biz_type
+                all_items.extend(items)
+                if page_no * NUM_OF_ROWS >= total_count:
+                    break
+                page_no += 1
+                time.sleep(0.2)
+
+    _emit(progress_cb, f"총 {len(all_items)}건 조회 완료. 발주기관 '{keyword}' 포함 여부로 필터링 중...")
+
+    records = []
+    for it in all_items:
+        title = clean_text(pick_field(it, FIELD_CANDIDATES["공고명"]))
+        institution = clean_text(pick_field(it, FIELD_CANDIDATES["발주기관"]))
+        if not title or not institution:
+            continue
+        if keyword not in institution:
+            continue
+        if not is_registered_notice(it, title, cfg):
+            continue
+        if title_excluded(title, cfg):
+            continue
+
+        is_coop = "협력업체" in title
+        has_clear_keyword = title_included(title, cfg)
+        note = ""
+        if is_coop:
+            if not has_clear_keyword:
+                note = cfg["unclear_coop_note"]
+        else:
+            if not has_clear_keyword:
+                continue
+
+        category, detail = classify_title(title)
+        region = extract_region(institution, title)
+        notice_dt = format_notice_datetime(pick_field(it, FIELD_CANDIDATES["공고일시"]))
+
+        note_parts = []
+        if note:
+            note_parts.append(note)
+        kind = get_notice_kind(it)
+        for mark in ("재공고", "정정"):
+            if mark in kind or mark in title.replace(" ", ""):
+                note_parts.append(f"[{mark if mark != '정정' else '정정공고'}]")
+                break
+        if category and category != "기타":
+            tag = f"[{category}/{detail}]" if detail else f"[{category}]"
+            note_parts.append(tag)
+
+        records.append({
+            "공고일시": notice_dt,
+            "구분": category,
+            "세부내역": detail,
+            "지역": region,
+            "공고명": title,
+            "발주기관": institution,
+            "업무구분": it.get("_업무구분", ""),
+            "비고": " ".join(note_parts),
+            "_공고번호": pick_field(it, FIELD_CANDIDATES["공고번호"]),
+            "_공고차수": pick_field(it, FIELD_CANDIDATES["공고차수"]),
+        })
+
+    if not records:
+        return InstitutionSearchResult(
+            raw_count=len(all_items), ok=False,
+            message=f"조회 기간 내 '{keyword}' 관련 기술용역 공고를 찾지 못했습니다.",
+        )
+
+    df = pd.DataFrame(records)
+    df["_고유키"] = df["_공고번호"].astype(str) + "_" + df["_공고차수"].astype(str)
+    df = df.drop_duplicates(subset="_고유키", keep="first")
+    df = df.drop(columns=["_공고번호", "_공고차수", "_고유키"])
+    df = df.sort_values("공고일시", ascending=False).reset_index(drop=True)
+
+    excel_dir = excel_dir or str(DEFAULT_EXCEL_PATH.parent)
+    os.makedirs(excel_dir, exist_ok=True)
+    safe_keyword = re.sub(r'[\\/:*?"<>|]', "", keyword)[:40] or "조회결과"
+    excel_path = os.path.join(excel_dir, f"{safe_keyword}_이력조회.xlsx")
+    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Sheet1")
+
+    _emit(progress_cb, f"=== 필터 통과 {len(df)}건 -> 엑셀 저장 완료: {excel_path} ===")
+
+    return InstitutionSearchResult(
+        raw_count=len(all_items),
+        filtered_df=df,
+        excel_path=excel_path,
+        ok=True,
+        message=f"{len(df)}건 찾음",
+    )
