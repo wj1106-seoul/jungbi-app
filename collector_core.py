@@ -4,14 +4,21 @@ collector_core.py
 ------------------------------------------------------------------
 누리장터 정비사업 입찰공고 수집기 - 핵심 엔진 (UI/스케줄러에서 공통으로 가져다 쓰는 모듈)
 
-원본 collector_v2.py의 로직을 그대로 유지하면서, 다음을 추가/정리했습니다.
-  1) SERVICE_KEY를 코드에서 분리 -> .env 파일에서 읽음 (보안)
-  2) 필터/분류 규칙을 config.json으로 분리 -> 코드 수정 없이 웹 화면에서 편집 가능
-  3) API 호출 실패 시 지수 백오프 재시도 (일시적 네트워크 오류로 공고가 누락되는 것 방지)
-  4) 실행 로그를 파일로 남김 (logs/collector_YYYYMMDD.log) + progress_cb로 화면에도 실시간 표시
-  5) main()에서 하던 일을 run_pipeline() 함수로 분리 -> Streamlit 앱, 스케줄러, CLI 어디서든 재사용
+[v3 반영 (2026-08-07 기준)]
+  - 공고 상태 판정을 API의 "공고구분" 필드 기반으로 변경 (변경/취소/철회/무효만 제외,
+    재공고·정정공고는 정상 수집). 필드가 없을 때만 공고명 기반 예비 판정 사용.
+  - 공고명 제외 규칙에 "공사" 발주 건 제외 규칙 추가 (감리/설계/심의 등 딸린 용역은 예외)
+  - 분류 로직 전면 개선: CM > PM > 감리 > 설계 > 엔지니어링 우선순위, 설계는 등장 분야를
+    "전기+통신"처럼 자동 조합
+  - 협력업체 공고 중 "기타"로 분류된 건은 첨부 공고문 본문에서 "용역명"을 찾아 재분류
+  - 공고번호 기준 중복 제거 외에, 공고명+발주기관 내용 기준 2차 중복 제거 추가
 
-curl.exe를 통한 우회 호출, 필터링/분류 규칙, 첨부파일 파싱 로직 자체는 원본과 동일합니다.
+원본 collector_v2.py 대비 이번 웹앱 버전에서 유지되는 것:
+  1) SERVICE_KEY를 .env / Streamlit secrets에서 읽음 (보안)
+  2) 필터 키워드를 config.json으로 분리 -> 웹 화면에서 편집 가능
+  3) API 호출 실패 시 지수 백오프 재시도
+  4) 실행 로그 파일 + progress_cb로 화면에 실시간 표시
+  5) run_pipeline() 하나로 Streamlit 앱/CLI/스케줄러 어디서든 재사용
 """
 
 import os
@@ -72,8 +79,6 @@ def _emit(progress_cb: Optional[Callable[[str], None]], msg: str, level: str = "
 
 
 # ============================== curl 기반 네트워크 함수 (원본 동일) ===============================
-# 회사망에서 python(requests/OpenSSL)이 막히고 curl.exe(Schannel)만 통과하는 환경 대응.
-# CURL_PATH는 .env에서 오버라이드 가능 (다른 PC/서버에 배포할 때 필요하면).
 
 CURL_PATH = os.environ.get("CURL_PATH", "curl")
 
@@ -124,9 +129,8 @@ def curl_download(url: str, dest_path: str, timeout: int = 30) -> bool:
     return os.path.exists(dest_path) and os.path.getsize(dest_path) > 0
 
 
-def curl_get_json_with_retry(url, params, timeout=30, retries=3, backoff_base=2,
-                              progress_cb=None):
-    """[신규] 일시적 네트워크 오류(타임아웃 등)에 대해 지수 백오프로 재시도"""
+def curl_get_json_with_retry(url, params, timeout=30, retries=3, backoff_base=2, progress_cb=None):
+    """일시적 네트워크 오류(타임아웃 등)에 대해 지수 백오프로 재시도"""
     last_err = None
     for attempt in range(1, retries + 1):
         try:
@@ -141,6 +145,8 @@ def curl_get_json_with_retry(url, params, timeout=30, retries=3, backoff_base=2,
 
 
 # ============================== 필터/분류 설정 (config.json으로 분리) ===============================
+# 발주기관/공고명 포함·제외 키워드는 웹 화면에서 편집 가능하도록 config.json에 둡니다.
+# (공고구분 판정, 분류 우선순위 알고리즘 등 "엔진 로직"에 가까운 것들은 아래에서 모듈 상수로 둡니다.)
 
 DEFAULT_CONFIG = {
     "biz_types": ["용역"],
@@ -150,7 +156,8 @@ DEFAULT_CONFIG = {
         "케이비부동산신탁", "한국자산신탁",
         "추진위원회", "준비위원회", "추진준비위", "주민대표회의", "운영위원회",
     ],
-    "exclude_status_keywords": ["변경공고", "취소공고", "재공고", "정정공고", "정정 공고"],
+    # [v3] 공고구분 필드가 없을 때만 쓰는 예비(공고명 기반) 제외 키워드. 재공고는 일부러 제외 목록에 없음(수집 대상).
+    "fallback_exclude_status_keywords": ["변경공고", "변경 공고", "취소공고", "취소 공고"],
     "include_title_keywords": [
         "CM", "PCM", "건설사업관리",
         "PM", "P.M", "사업관리",
@@ -163,6 +170,7 @@ DEFAULT_CONFIG = {
         "흙막이", "석면해체", "해체계획", "인허가", "경관심의", "기반시설",
         "소방", "전기", "통신",
     ],
+    # [v3] 인테리어/통신보안/사업비컨설팅/도장·방수 등 마감·솔루션 계열 제외 키워드 추가, "도시계획" 계열 통합
     "exclude_title_keywords": [
         "정비사업전문관리", "시공사", "시공자",
         "세무", "회계", "법", "변호사", "소송", "매도청구",
@@ -170,30 +178,20 @@ DEFAULT_CONFIG = {
         "분양", "책임매입", "매각", "주택관리업자", "사업시행자", "우선협상",
         "정비계획", "CCTV", "횡단보도", "감정평가", "조합설립", "청산",
         "보류지", "상가", "보험", "폐기물", "공사비", "국공유지", "무상양도", "기부대양여",
-        "공공디자인", "도시계획업체", "도시계획분야", "도시계획용역",
+        "공공디자인", "도시계획",
         "BF인증", "장애물 없는", "설계공모", "현상설계",
         "석면사전조사", "석면측정", "농도측정", "농도 측정", "HUG보증", "지장물",
         "내진설계", "내풍설계", "풍동실험", "지적측량", "토질",
         "관리처분", "관리계획수립", "원인자부담금", "음식물",
+        "인테리어", "실내건축", "가구설계",
+        "통신보안", "보안솔루션", "보안 솔루션", "정보보안", "홈네트워크 보안",
+        "사업비절감", "사업비 절감", "정산", "환급", "원가절감",
+        "도료", "도장", "방수", "조명", "사인물",
+        "제연", "부속실",
     ],
     "exclude_unless_keyword": {"경관": "경관심의"},
     "exclude_title_phrases": ["임대주택 매각"],
     "unclear_coop_note": "수동확인",
-    "classification_rules": [
-        ["CM", ["CM", "PCM", "건설사업관리"]],
-        ["PM", ["PM", "P.M", "사업관리"]],
-        ["감리", ["석면해체", "소방+통신", "전기+통신+소방", "감리"]],
-        ["엔지니어링", [
-            "교통영향평가", "환경영향평가", "재해영향평가", "교육환경평가", "교육영향평가",
-            "친환경평가", "친환경", "경관심의", "지하안전", "전력계통영향평가", "전력계통",
-            "건축물안전영향평가", "해체계획서+인허가", "해체계획서", "해체계획", "인허가",
-        ]],
-        ["설계", [
-            "설계자", "설계업자", "건축설계", "기본설계", "실시설계",
-            "토목설계", "토목", "정비기반시설", "소방설계", "전기설계", "전기+통신 설계",
-        ]],
-        ["공사", ["기반시설"]],
-    ],
 }
 
 
@@ -201,7 +199,14 @@ def load_config() -> dict:
     if CONFIG_PATH.exists():
         try:
             with open(CONFIG_PATH, encoding="utf-8") as f:
-                return json.load(f)
+                loaded = json.load(f)
+            # 이전 버전(config.json)에 없던 v3 신규 키가 있으면 기본값으로 채워 넣음(하위 호환)
+            merged = dict(DEFAULT_CONFIG)
+            merged.update(loaded)
+            for key, default_val in DEFAULT_CONFIG.items():
+                if key not in loaded:
+                    merged[key] = default_val
+            return merged
         except (json.JSONDecodeError, OSError):
             logger.warning("config.json 파싱 실패 - 기본값으로 복구합니다.")
     save_config(DEFAULT_CONFIG)
@@ -230,8 +235,18 @@ OPERATION_BY_BIZ = {
 CHUNK_DAYS = 3
 NUM_OF_ROWS = 500
 
+# [v3] 공고구분(공고종류) 필드 후보 - 일반/변경/취소/재공고 판정용
+NOTICE_KIND_FIELDS = [
+    "ntceKindNm", "bidNtceKindNm", "pblancKindNm", "ntceDivNm",
+    "bidNtceDivNm", "rgstTyNm", "ntceSeCd", "ntceSeNm",
+]
+
+# 공고구분 값이 이 중 하나에 해당하면 제외 (재공고·정정공고는 여기 없음 = 수집됨)
+EXCLUDE_NOTICE_KINDS = ["변경", "취소", "철회", "무효"]
+
 FIELD_CANDIDATES = {
     "공고명": ["bidNtceNm", "pblancNm", "ntceNm"],
+    "공고구분": NOTICE_KIND_FIELDS,
     "발주기관": ["ntceInsttNm", "dminsttNm", "ordersInsttNm", "orderInsttNm"],
     "지역": ["prtcptPsblRgnNm", "rgnNm", "areaNm"],
     "공고일시": ["bidNtceDt", "nticeDt", "ntceDt", "pblancDt", "rgstDt"],
@@ -241,6 +256,30 @@ FIELD_CANDIDATES = {
     "공고번호": ["bidNtceNo", "pblancNo"],
     "공고차수": ["bidNtceOrd", "pblancOrd"],
 }
+
+# [v3] "OO공사 용역"처럼 실제로는 공사 발주인 건을 제외. 단, 공사에 딸린 감리/설계/심의 용역은 살림.
+CONSTRUCTION_HINT = "공사"
+CONSTRUCTION_ALLOW = [
+    "감리", "설계", "계획서", "심의", "평가", "진단", "점검",
+    "용역관리", "사업관리", "건설사업관리",
+]
+
+# [v3] 분류 알고리즘용 상수 (설계 세부내역 조합, 엔지니어링 키워드)
+DESIGN_FIELDS = [
+    ("정보통신", "통신"), ("통신", "통신"), ("전기", "전기"), ("소방", "소방"),
+    ("기계", "기계설비"), ("설비", "기계설비"),
+    ("토목", "토목"), ("조경", "조경"), ("건축", "건축"),
+]
+ENGINEERING_KEYWORDS = [
+    "교통영향평가", "환경영향평가", "재해영향평가", "교육환경평가", "교육영향평가",
+    "친환경평가", "친환경인증", "경관심의", "지하안전", "전력계통영향평가", "전력계통",
+    "건축물안전영향평가", "해체계획서", "해체계획",
+]
+
+# [v3] 협력업체 공고 본문에서 용역명을 찾기 위한 라벨
+SERVICE_NAME_LABELS = ["용역명", "용역명칭", "과업명", "용역및공사명", "공사및용역명", "입찰건명"]
+PROJECT_NAME_LABELS = ["사업명", "사업지명"]
+_NEXT_LABEL_CUT = r"(?=\s*(?:[가-힣]|\d+)\s*[.)]\s*[가-힣\s]{1,8}\s*[:：])"
 
 
 def pick_field(item: dict, candidates: list, default=""):
@@ -375,10 +414,26 @@ def collect_raw(cfg: dict, service_key: str, yesterday_only: bool, days_back: in
     return all_rows
 
 
-# ---------------------------- 필터링 / 분류 로직 ----------------------------
+# ---------------------------- 필터링 / 분류 로직 (v3) ----------------------------
 
-def is_registered_notice(title: str, cfg: dict) -> bool:
-    return not any(kw in title for kw in cfg["exclude_status_keywords"])
+def get_notice_kind(item: dict) -> str:
+    """API 응답에서 공고구분(공고종류) 값을 꺼냄. 필드가 없으면 빈 문자열(=판정 불가)."""
+    return clean_text(pick_field(item, NOTICE_KIND_FIELDS))
+
+
+def is_registered_notice(item: dict, title: str, cfg: dict) -> bool:
+    """
+    1순위: API의 공고구분 필드로 판정. '변경/취소/철회/무효'만 제외하고
+           '일반공고·재공고·정정공고'는 모두 수집합니다.
+    2순위: 공고구분 필드가 응답에 없을 때만, 공고명 기반으로 예비 판정합니다.
+    """
+    kind = get_notice_kind(item)
+    if kind:
+        return not any(bad in kind for bad in EXCLUDE_NOTICE_KINDS)
+
+    t = title.replace(" ", "")
+    fallback_kws = cfg.get("fallback_exclude_status_keywords", [])
+    return not any(kw.replace(" ", "") in t for kw in fallback_kws)
 
 
 def institution_passes(institution: str, cfg: dict) -> bool:
@@ -386,13 +441,18 @@ def institution_passes(institution: str, cfg: dict) -> bool:
 
 
 def title_excluded(title: str, cfg: dict) -> bool:
-    if any(kw in title for kw in cfg["exclude_title_keywords"]):
+    """공백을 지운 문자열로 비교(띄어쓰기 표기 차이 무시) + 공사 발주 건 제외 규칙 포함"""
+    t = title.replace(" ", "")
+
+    if any(kw.replace(" ", "") in t for kw in cfg["exclude_title_keywords"]):
         return True
-    if any(phrase in title for phrase in cfg["exclude_title_phrases"]):
+    if any(phrase.replace(" ", "") in t for phrase in cfg["exclude_title_phrases"]):
         return True
     for bad_kw, unless_kw in cfg["exclude_unless_keyword"].items():
-        if bad_kw in title and unless_kw not in title:
+        if bad_kw in t and unless_kw not in t:
             return True
+    if CONSTRUCTION_HINT in t and not any(a in t for a in CONSTRUCTION_ALLOW):
+        return True
     return False
 
 
@@ -400,11 +460,37 @@ def title_included(title: str, cfg: dict) -> bool:
     return any(kw in title for kw in cfg["include_title_keywords"])
 
 
-def classify_title(title: str, cfg: dict):
-    for category, keywords in cfg["classification_rules"]:
-        for kw in keywords:
-            if kw in title:
-                return category, kw
+def classify_title(title: str):
+    """
+    공고명으로 (구분, 세부내역)을 결정. 매칭 안 되면 ("기타", "").
+    우선순위: CM > PM > 감리 > 설계 > 엔지니어링.
+    설계 세부내역은 등장 분야를 모아 "전기+통신"처럼 자동 조합.
+    """
+    t = re.sub(r"[\s,·]", "", title)
+
+    if any(kw in t for kw in ["건설사업관리", "PCM", "CM"]):
+        return "CM", "건설사업관리"
+    if any(kw in t for kw in ["사업관리", "P.M", "PM"]):
+        return "PM", "사업관리"
+
+    if "감리" in t:
+        return "감리", ("석면해체" if "석면" in t else "감리")
+
+    if "설계" in t:
+        if "설계자" in t or "설계업자" in t:
+            return "설계", "설계자"
+        found = {}
+        for kw, name in DESIGN_FIELDS:
+            pos = t.find(kw)
+            if pos >= 0 and (name not in found or pos < found[name]):
+                found[name] = pos
+        fields = [name for name, _ in sorted(found.items(), key=lambda x: x[1])]
+        return "설계", ("+".join(fields) if fields else "설계")
+
+    for kw in ENGINEERING_KEYWORDS:
+        if kw in t:
+            return "엔지니어링", kw
+
     return "기타", ""
 
 
@@ -434,6 +520,17 @@ def format_notice_datetime(raw) -> str:
     return str(raw)
 
 
+def make_content_key(title: str, institution: str) -> str:
+    """
+    중복 판정용 키. 공고명에서 공백·괄호·쉼표 등 표기 차이를 모두 제거하고,
+    끝에 붙는 '입찰공고 / 공고 / 입찰' 같은 상투어도 떼어낸 뒤 발주기관명과 합침.
+    """
+    t = re.sub(r"[\s\(\)\[\]{}·,\.\-_/]", "", str(title))
+    t = re.sub(r"(입찰재공고|입찰공고|재공고|입찰|공고)$", "", t)
+    inst = re.sub(r"\s", "", str(institution))
+    return f"{t}|{inst}"
+
+
 def apply_filters_and_classify(raw_items: list, cfg: dict):
     records = []
     for it in raw_items:
@@ -442,7 +539,7 @@ def apply_filters_and_classify(raw_items: list, cfg: dict):
 
         if not title:
             continue
-        if not is_registered_notice(title, cfg):
+        if not is_registered_notice(it, title, cfg):
             continue
         if not institution_passes(institution, cfg):
             continue
@@ -460,12 +557,17 @@ def apply_filters_and_classify(raw_items: list, cfg: dict):
             if not has_clear_keyword:
                 continue
 
-        category, detail = classify_title(title, cfg)
+        category, detail = classify_title(title)
         region = extract_region(institution, title)
 
         note_parts = []
         if note:
             note_parts.append(note)
+        kind = get_notice_kind(it)
+        for mark in ("재공고", "정정"):
+            if mark in kind or mark in title.replace(" ", ""):
+                note_parts.append(f"[{mark if mark != '정정' else '정정공고'}]")
+                break
         if category and category != "기타":
             tag = f"[{category}/{detail}]" if detail else f"[{category}]"
             note_parts.append(tag)
@@ -507,10 +609,17 @@ def apply_filters_and_classify(raw_items: list, cfg: dict):
         return pd.DataFrame()
 
     df = pd.DataFrame(records)
+
+    # 1차: 공고번호+차수 기준 중복 제거
     df["_고유키"] = (
         df["_공고번호"].astype(str) + "_" + df["_공고차수"].astype(str) + "_" + df["_업무구분"]
     )
     df = df.drop_duplicates(subset="_고유키", keep="first")
+
+    # 2차: 내용(공고명+발주기관) 기준 중복 제거 - 표기 차이로 중복 등록된 건 정리
+    df["_내용키"] = df.apply(lambda r: make_content_key(r["공고명"], r["발주기관"]), axis=1)
+    df = df.drop_duplicates(subset="_내용키", keep="first")
+
     return df
 
 
@@ -635,6 +744,85 @@ def extract_text_from_file(file_path: str) -> str:
     return ""
 
 
+# ------------- [v3] 협력업체 공고 재분류: 공고문 본문에서 용역명 추출 -------------
+
+def _fuzzy(label: str) -> str:
+    """라벨 글자 사이 공백 허용 ('용 역 명' 표기 대응)"""
+    return r"\s*".join(re.escape(ch) for ch in label)
+
+
+def _grab_label_value(flat: str, labels: list, max_len: int = 120) -> str:
+    for lab in labels:
+        m = re.search(_fuzzy(lab) + r"\s*[:：]\s*", flat)
+        if m:
+            seg = flat[m.end():m.end() + max_len]
+            cut = re.search(_NEXT_LABEL_CUT, seg)
+            if cut:
+                seg = seg[:cut.start()]
+            return re.sub(r"\s+", " ", seg).strip(" .,·-")
+    return ""
+
+
+def _title_after_notice_no(flat: str) -> str:
+    """'○○조합 공고 제2026-007호' 바로 뒤에 붙는 공고 제목을 뽑음"""
+    m = re.search(r"공\s*고\s*제?\s*[0-9A-Za-z\s\-–—]{1,20}?호", flat)
+    if not m:
+        return ""
+    seg = flat[m.end():m.end() + 90]
+    m2 = re.search(r"입찰\s*(재)?공고", seg)
+    if m2:
+        seg = seg[:m2.end()]
+    return re.sub(r"\s+", " ", seg).strip(" .,·-")
+
+
+def extract_service_name(text: str):
+    """공고문 본문에서 (용역명, 출처)를 뽑음. 못 찾으면 ("", "")."""
+    if not text:
+        return "", ""
+    flat = re.sub(r"\s+", " ", text)
+
+    svc = _grab_label_value(flat, SERVICE_NAME_LABELS)
+    if svc:
+        proj = _grab_label_value(flat, PROJECT_NAME_LABELS)
+        if proj and proj in svc:
+            svc = svc.replace(proj, "").strip(" .,·-")
+        if 4 <= len(svc) <= 80:
+            return svc, "용역명"
+
+    title = _title_after_notice_no(flat)
+    if title and 4 <= len(title) <= 80:
+        return title, "공고제목"
+    return "", ""
+
+
+def classify_from_document(text: str, cfg: dict):
+    """
+    공고문 본문 기반 분류. (구분, 세부내역, 용역명) 반환. 실패하면 ("기타", "", "").
+    용역명 -> 공고제목 순으로 시도하고, classify_title() 결과가 '기타'면 버림
+    (title_excluded()로 오추출을 한 번 더 걸러냄).
+    """
+    if not text:
+        return "기타", "", ""
+    flat = re.sub(r"\s+", " ", text)
+
+    for getter in (
+        lambda: _grab_label_value(flat, SERVICE_NAME_LABELS),
+        lambda: _title_after_notice_no(flat),
+    ):
+        name = getter()
+        if not name or not (4 <= len(name) <= 80):
+            continue
+        proj = _grab_label_value(flat, PROJECT_NAME_LABELS)
+        if proj and proj in name:
+            name = name.replace(proj, "").strip(" .,·-")
+        if title_excluded(name, cfg):
+            continue
+        cat, det = classify_title(name)
+        if cat != "기타":
+            return cat, det, name
+    return "기타", "", ""
+
+
 def extract_location_snippet(text: str) -> str:
     m = re.search(r"(사업지|사업)?\s*위\s*치\s*[:：]?", text)
     if m:
@@ -712,13 +900,16 @@ def extract_area_info(text: str) -> dict:
 
 
 def download_attachments_for_row(row, attachment_dir: str):
+    """
+    반환값: (처리 결과 메모, 문서에서 찾은 지역 또는 빈 문자열, 면적 정보 dict, 합쳐진 문서 본문 텍스트)
+    """
     item = row.get("_raw_dict", {})
     if not isinstance(item, dict):
-        return "원본 데이터 없음", "", {}
+        return "원본 데이터 없음", "", {}, ""
 
     urls = find_urls_in_item(item)
     if not urls:
-        return "다운로드 링크 없음(URL 필드 미발견)", "", {}
+        return "다운로드 링크 없음(URL 필드 미발견)", "", {}, ""
 
     institution = row.get("발주기관", "")
     project_type = row.get("_사업유형", "")
@@ -733,6 +924,7 @@ def download_attachments_for_row(row, attachment_dir: str):
     results = []
     region_found = ""
     area_found = {}
+    doc_texts = []
     for idx, (field_name, url) in enumerate(urls, start=1):
         download_url = url
         tmp_path = os.path.join(folder_path, f"_tmp_dl_{idx}.dat")
@@ -769,12 +961,14 @@ def download_attachments_for_row(row, attachment_dir: str):
             continue
 
         doc_text = extract_text_from_file(file_path)
+        if doc_text:
+            doc_texts.append(doc_text)
         if not region_found:
             region_found = find_region_in_text(doc_text)
         if not area_found:
             area_found = extract_area_info(doc_text)
 
-    return "; ".join(results), region_found, area_found
+    return "; ".join(results), region_found, area_found, "\n".join(doc_texts)
 
 
 # ---------------------------- 엑셀 출력 ----------------------------
@@ -871,6 +1065,7 @@ class RunResult:
     excel_path: Optional[str] = None
     title_date: Optional[datetime] = None
     attachment_logs: list = field(default_factory=list)
+    reclassified_count: int = 0
     errors: list = field(default_factory=list)
     ok: bool = True
     message: str = ""
@@ -910,19 +1105,41 @@ def run_pipeline(
     df.insert(0, "연번", range(1, len(df) + 1))
 
     attachment_logs = []
+    reclassified_count = 0
     if download_attachments:
         _emit(progress_cb, f"--- 첨부파일(공고문/지침서) 다운로드 시도 ({len(df)}건) ---")
         os.makedirs(attachment_dir, exist_ok=True)
         for idx, row in df.iterrows():
-            result, region_from_doc, area_info = download_attachments_for_row(row, attachment_dir)
+            result, region_from_doc, area_info, doc_text = download_attachments_for_row(row, attachment_dir)
             if region_from_doc:
                 df.at[idx, "지역"] = region_from_doc
             for col_name, value in area_info.items():
                 df.at[idx, col_name] = value
+
+            # [v3] 협력업체 공고 중 "기타"로 남은 건을 공고문 본문 용역명으로 재분류
+            if df.at[idx, "구분"] == "기타" and "협력업체" in str(row["공고명"]) and doc_text:
+                cat, det, svc_name = classify_from_document(doc_text, cfg)
+                if cat != "기타":
+                    df.at[idx, "구분"] = cat
+                    df.at[idx, "세부내역"] = det
+                    if svc_name and svc_name not in str(row["공고명"]):
+                        df.at[idx, "공고명"] = f"{row['공고명']} ({svc_name})"
+                    old = str(df.at[idx, "비고"] or "")
+                    df.at[idx, "비고"] = (old + f" [문서추출/{cat}/{det}]").strip()
+                    reclassified_count += 1
+                    _emit(progress_cb, f"    · 문서 기반 재분류: {cat}/{det} <- \"{svc_name}\"")
+
             area_note = f", 면적정보: {area_info}" if area_info else ""
             log_line = f"  - {row['공고명']}: {result}{area_note}"
             attachment_logs.append(log_line)
             _emit(progress_cb, log_line)
+
+        if reclassified_count:
+            _emit(progress_cb, f"  [문서추출] 협력업체 공고 {reclassified_count}건을 공고문 본문으로 재분류했습니다.")
+
+    # 재분류로 연번이 비지 않도록 마지막에 다시 매김
+    df = df.reset_index(drop=True)
+    df["연번"] = range(1, len(df) + 1)
 
     df_out = df[FULL_COLS].copy()
     title_date = get_previous_business_day(datetime.now()) if yesterday_only else datetime.now()
@@ -936,6 +1153,7 @@ def run_pipeline(
         excel_path=excel_path,
         title_date=title_date,
         attachment_logs=attachment_logs,
+        reclassified_count=reclassified_count,
         ok=True,
         message=f"필터 통과 {len(df_out)}건",
     )
