@@ -462,6 +462,27 @@ else:
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
+    attachment_dir_path = core.DEFAULT_ATTACHMENT_DIR
+    if attachment_dir_path.exists() and any(attachment_dir_path.iterdir()):
+        with st.expander("📎 공고문/지침서 개별 다운로드", expanded=False):
+            folders = sorted([f for f in attachment_dir_path.iterdir() if f.is_dir()])
+            if not folders:
+                st.caption("다운로드된 첨부파일이 없습니다.")
+            for folder in folders:
+                files = sorted([f for f in folder.glob("*") if f.is_file()])
+                if not files:
+                    continue
+                st.markdown(f"**{folder.name}**")
+                for f in files:
+                    with open(f, "rb") as fh:
+                        st.download_button(
+                            f.name,
+                            data=fh.read(),
+                            file_name=f.name,
+                            key=f"dl_{folder.name}_{f.name}",
+                        )
+                st.write("")
+
 st.divider()
 with st.expander("📜 최근 실행 로그 파일 보기"):
     log_files = sorted(core.LOG_DIR.glob("collector_*.log"), reverse=True)
