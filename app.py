@@ -8,6 +8,7 @@ app.py - 정비사업 입찰공고 수집기 사내 웹앱 (Streamlit)
 """
 import os
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -464,7 +465,20 @@ else:
 
     attachment_dir_path = core.DEFAULT_ATTACHMENT_DIR
     if attachment_dir_path.exists() and any(attachment_dir_path.iterdir()):
-        with st.expander("📎 공고문/지침서 개별 다운로드", expanded=False):
+        with st.expander("📎 공고문/지침서 다운로드", expanded=False):
+            zip_base = str(BASE_DIR / "output" / "공고문_첨부파일")
+            zip_path = shutil.make_archive(zip_base, "zip", root_dir=str(attachment_dir_path))
+            with open(zip_path, "rb") as f:
+                st.download_button(
+                    "⬇️ 전체 한 번에 다운로드 (zip)",
+                    data=f.read(),
+                    file_name="공고문_첨부파일.zip",
+                    mime="application/zip",
+                    use_container_width=True,
+                )
+            st.divider()
+            st.caption("또는 필요한 파일만 하나씩 받으실 수 있습니다.")
+
             folders = sorted([f for f in attachment_dir_path.iterdir() if f.is_dir()])
             if not folders:
                 st.caption("다운로드된 첨부파일이 없습니다.")
