@@ -1170,6 +1170,7 @@ class InstitutionSearchResult:
     raw_count: int = 0
     filtered_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     excel_path: Optional[str] = None
+    attachment_dir: Optional[str] = None
     ok: bool = True
     message: str = ""
 
@@ -1189,6 +1190,8 @@ def search_by_institution(
     years_back: float = 1,
     biz_types: Optional[list] = None,
     excel_dir: Optional[str] = None,
+    download_attachments: bool = False,
+    attachment_dir: Optional[str] = None,
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> InstitutionSearchResult:
     """
@@ -1296,6 +1299,10 @@ def search_by_institution(
             "비고": " ".join(note_parts),
             "_공고번호": pick_field(it, FIELD_CANDIDATES["공고번호"]),
             "_공고차수": pick_field(it, FIELD_CANDIDATES["공고차수"]),
+            "_구분": category,
+            "_세부내역": detail,
+            "_사업유형": extract_project_type(title + " " + institution),
+            "_raw_dict": it,
         })
 
     if not records:
@@ -1310,19 +1317,36 @@ def search_by_institution(
     df = df.drop(columns=["_공고번호", "_공고차수", "_고유키"])
     df = df.sort_values("공고일시", ascending=False).reset_index(drop=True)
 
+    attachment_logs = []
+    if download_attachments:
+        safe_keyword_for_dir = re.sub(r'[\\/:*?"<>|]', "", keyword)[:40] or "조회결과"
+        attachment_dir = attachment_dir or str(DEFAULT_ATTACHMENT_DIR.parent / f"이력조회_{safe_keyword_for_dir}")
+        os.makedirs(attachment_dir, exist_ok=True)
+        _emit(progress_cb, f"--- 첨부파일(공고문/지침서) 다운로드 시도 ({len(df)}건) ---")
+        for idx, row in df.iterrows():
+            result_msg, region_from_doc, area_info, _ = download_attachments_for_row(row, attachment_dir)
+            if region_from_doc and not df.at[idx, "지역"]:
+                df.at[idx, "지역"] = region_from_doc
+            log_line = f"  - {row['공고명']}: {result_msg}"
+            attachment_logs.append(log_line)
+            _emit(progress_cb, log_line)
+
+    df_public = df.drop(columns=["_구분", "_세부내역", "_사업유형", "_raw_dict"])
+
     excel_dir = excel_dir or str(DEFAULT_EXCEL_PATH.parent)
     os.makedirs(excel_dir, exist_ok=True)
     safe_keyword = re.sub(r'[\\/:*?"<>|]', "", keyword)[:40] or "조회결과"
     excel_path = os.path.join(excel_dir, f"{safe_keyword}_이력조회.xlsx")
     with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Sheet1")
+        df_public.to_excel(writer, index=False, sheet_name="Sheet1")
 
-    _emit(progress_cb, f"=== 필터 통과 {len(df)}건 -> 엑셀 저장 완료: {excel_path} ===")
+    _emit(progress_cb, f"=== 필터 통과 {len(df_public)}건 -> 엑셀 저장 완료: {excel_path} ===")
 
     return InstitutionSearchResult(
         raw_count=len(all_items),
-        filtered_df=df,
+        filtered_df=df_public,
         excel_path=excel_path,
+        attachment_dir=(attachment_dir if download_attachments else None),
         ok=True,
-        message=f"{len(df)}건 찾음",
+        message=f"{len(df_public)}건 찾음",
     )

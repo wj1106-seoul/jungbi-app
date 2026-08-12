@@ -552,6 +552,8 @@ with tab2:
             "업무구분", ["용역", "공사", "물품", "기타"], default=["용역"],
         )
 
+    hist_download_attachments = st.checkbox("첨부파일(공고문/지침서) 다운로드", value=True, key="hist_dl_att")
+
     est_calls = core.estimate_institution_search_calls(years_back, hist_biz_types or ["용역"])
     st.caption(
         f"⏱️ 예상 API 호출 횟수: 약 {est_calls}회 — 기간이 길수록 오래 걸립니다 "
@@ -580,6 +582,7 @@ with tab2:
                     cfg=st.session_state.cfg,
                     years_back=years_back,
                     biz_types=hist_biz_types or ["용역"],
+                    download_attachments=hist_download_attachments,
                     progress_cb=hist_progress_cb,
                 )
             st.session_state.hist_result = hist_result
@@ -606,6 +609,42 @@ with tab2:
                     file_name=os.path.basename(hist_result.excel_path),
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
+
+        if hist_result.attachment_dir:
+            hist_attach_dir = Path(hist_result.attachment_dir)
+            if hist_attach_dir.exists() and any(hist_attach_dir.iterdir()):
+                with st.expander("📎 공고문/지침서 다운로드", expanded=False):
+                    zip_base = str(BASE_DIR / "output" / f"이력조회_{institution_keyword}_첨부파일")
+                    zip_path = shutil.make_archive(zip_base, "zip", root_dir=str(hist_attach_dir))
+                    with open(zip_path, "rb") as f:
+                        st.download_button(
+                            "⬇️ 전체 한 번에 다운로드 (zip)",
+                            data=f.read(),
+                            file_name="공고문_첨부파일.zip",
+                            mime="application/zip",
+                            use_container_width=True,
+                            key="hist_zip_dl",
+                        )
+                    st.divider()
+                    st.caption("또는 필요한 파일만 하나씩 받으실 수 있습니다.")
+
+                    hist_folders = sorted([f for f in hist_attach_dir.iterdir() if f.is_dir()])
+                    if not hist_folders:
+                        st.caption("다운로드된 첨부파일이 없습니다.")
+                    for folder in hist_folders:
+                        files = sorted([f for f in folder.glob("*") if f.is_file()])
+                        if not files:
+                            continue
+                        st.markdown(f"**{folder.name}**")
+                        for f in files:
+                            with open(f, "rb") as fh:
+                                st.download_button(
+                                    f.name,
+                                    data=fh.read(),
+                                    file_name=f.name,
+                                    key=f"hist_dl_{folder.name}_{f.name}",
+                                )
+                        st.write("")
 
 st.divider()
 with st.expander("📜 최근 실행 로그 파일 보기"):
