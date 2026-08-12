@@ -12,11 +12,14 @@ import shutil
 import base64
 import subprocess
 import zipfile
+import tempfile
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import altair as alt
 
@@ -386,45 +389,171 @@ def push_log(msg: str):
 # ------------------------------------------------------------------
 # 첨부파일 미리보기 (다운로드 없이 내용 확인)
 # ------------------------------------------------------------------
-def _extract_hwp_text(path: Path) -> str:
-    """구버전 HWP(바이너리, v5) 파일에서 텍스트만 추출 (hwp5txt 사용)."""
-    try:
-        result = subprocess.run(
-            ["hwp5txt", str(path)],
-            capture_output=True,
-            timeout=25,
+def _local_tag(tag: str) -> str:
+    """XML 태그의 네임스페이스를 떼고 태그 이름만 반환. 예: '{ns}t' -> 't'"""
+    return tag.rsplit("}", 1)[-1]
+
+
+def _convert_hwp_to_html(path: Path) -> str:
+    """구버전 HWP(바이너리, v5) 파일을 표/이미지가 살아있는 HTML로 변환 (hwp5html 사용)."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        try:
+            result = subprocess.run(
+                ["hwp5html", "--output", tmpdir, str(path)],
+                capture_output=True,
+                timeout=40,
+            )
+        except FileNotFoundError:
+            raise RuntimeError("hwp5html 실행 파일을 찾을 수 없습니다.")
+        except subprocess.TimeoutExpired:
+            raise RuntimeError("파일 변환이 너무 오래 걸려 중단했습니다.")
+        if result.returncode != 0:
+            err = result.stderr.decode("utf-8", errors="ignore").strip()
+            raise RuntimeError(err or "hwp5html 변환에 실패했습니다.")
+
+        index_path = Path(tmpdir) / "index.xhtml"
+        css_path = Path(tmpdir) / "styles.css"
+        bindata_dir = Path(tmpdir) / "bindata"
+        if not index_path.exists():
+            raise RuntimeError("변환 결과(HTML)를 찾을 수 없습니다.")
+
+        html_content = index_path.read_text(encoding="utf-8", errors="ignore")
+        css_content = css_path.read_text(encoding="utf-8", errors="ignore") if css_path.exists() else ""
+
+        # bindata/파일명 형태의 이미지 경로를 base64로 바꿔 이미지가 바로 보이게 함
+        def _inline_image(match: "re.Match") -> str:
+            rel_name = Path(match.group(1)).name
+            img_path = bindata_dir / rel_name
+            if img_path.exists():
+                ext = img_path.suffix.lstrip(".").lower() or "png"
+                mime = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
+                b64 = base64.b64encode(img_path.read_bytes()).decode("utf-8")
+                return f'src="data:{mime};base64,{b64}"'
+            return match.group(0)
+
+        html_content = re.sub(r'src="bindata/([^"]+)"', _inline_image, html_content)
+
+        extra_style = (
+            "body{font-family:'Malgun Gothic','맑은 고딕',sans-serif; padding:16px; "
+            "background:#FFFFFF; color:#222222;} "
+            "table{border-collapse:collapse;} td,th{border:1px solid #999999; padding:4px 6px;}"
         )
-    except FileNotFoundError:
-        raise RuntimeError("hwp5txt 실행 파일을 찾을 수 없습니다.")
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("파일 변환이 너무 오래 걸려 중단했습니다.")
-    if result.returncode != 0:
-        err = result.stderr.decode("utf-8", errors="ignore").strip()
-        raise RuntimeError(err or "hwp5txt 변환에 실패했습니다.")
-    return result.stdout.decode("utf-8", errors="ignore")
+        style_block = f"<style>{css_content}\n{extra_style}</style>"
+        if "<head>" in html_content:
+            html_content = html_content.replace("<head>", f"<head>{style_block}", 1)
+        else:
+            html_content = style_block + html_content
+        return html_content
 
 
-def _extract_hwpx_text(path: Path) -> str:
-    """HWPX(zip+xml) 파일에서 텍스트만 추출."""
+def _parse_hwpx_blocks(path: Path):
+    """HWPX(zip+xml) 파일을 문단/표 블록 리스트로 파싱. [('text', str) | ('table', rows), ...]"""
+    blocks = []
+
+    def _collect_text_in(elem, out: list):
+        for child in elem:
+            tag = _local_tag(child.tag)
+            if tag == "t":
+                if child.text:
+                    out.append(child.text)
+            elif tag == "tbl":
+                continue  # 표는 별도 블록으로 처리하므로 텍스트 수집에서는 건너뜀
+            else:
+                _collect_text_in(child, out)
+
+    def _extract_table(tbl_elem):
+        rows = []
+        for tr in tbl_elem:
+            if _local_tag(tr.tag) != "tr":
+                continue
+            row_cells = []
+            for tc in tr:
+                if _local_tag(tc.tag) != "tc":
+                    continue
+                cell_texts: list = []
+                _collect_text_in(tc, cell_texts)
+                row_cells.append(" ".join(cell_texts).strip())
+            if row_cells:
+                rows.append(row_cells)
+        return rows
+
+    def _walk(elem):
+        for child in elem:
+            tag = _local_tag(child.tag)
+            if tag == "p":
+                para_texts: list = []
+                for run in child:
+                    if _local_tag(run.tag) != "run":
+                        continue
+                    for rc in run:
+                        rtag = _local_tag(rc.tag)
+                        if rtag == "t":
+                            if rc.text:
+                                para_texts.append(rc.text)
+                        elif rtag == "tbl":
+                            rows = _extract_table(rc)
+                            if rows:
+                                blocks.append(("table", rows))
+                        else:
+                            nested: list = []
+                            _collect_text_in(rc, nested)
+                            para_texts.extend(nested)
+                text = "".join(para_texts).strip()
+                if text:
+                    blocks.append(("text", text))
+            else:
+                _walk(child)
+
     try:
-        texts = []
         with zipfile.ZipFile(path) as zf:
             section_names = sorted(
                 n for n in zf.namelist()
                 if "section" in n.lower() and n.lower().endswith(".xml")
             )
             for name in section_names:
-                data = zf.read(name)
-                root = ET.fromstring(data)
-                for elem in root.iter():
-                    tag = elem.tag.rsplit("}", 1)[-1]
-                    if tag == "p":
-                        texts.append("\n")
-                    elif tag == "t" and elem.text:
-                        texts.append(elem.text)
-        return "".join(texts).strip()
+                root = ET.fromstring(zf.read(name))
+                _walk(root)
     except Exception as e:
         raise RuntimeError(f"hwpx 파일을 읽는 중 문제가 발생했습니다: {e}")
+
+    return blocks
+
+
+def _render_document_blocks(blocks):
+    """문단/표 블록 리스트를 문서처럼 보이는 카드 스타일로 렌더링."""
+    if not blocks:
+        st.info("추출된 내용이 없습니다. 다운로드하여 확인해주세요.")
+        return
+
+    parts = [
+        '<div style="background:#FFFFFF; border:1px solid #E5E5E5; border-radius:8px; '
+        'padding:28px 32px; max-height:600px; overflow-y:auto; '
+        'font-family:\'Malgun Gothic\',\'맑은 고딕\',sans-serif; font-size:14.5px; '
+        'line-height:1.75; color:#222222;">'
+    ]
+    for kind, content in blocks:
+        if kind == "text":
+            safe = (
+                content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            )
+            parts.append(f'<p style="margin:0 0 12px 0;">{safe}</p>')
+        elif kind == "table":
+            rows_html = []
+            for row in content:
+                cells_html = "".join(
+                    f'<td style="border:1px solid #CCCCCC; padding:6px 10px; '
+                    f'font-size:13.5px;">{c.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")}</td>'
+                    for c in row
+                )
+                rows_html.append(f"<tr>{cells_html}</tr>")
+            table_html = (
+                '<table style="border-collapse:collapse; margin:8px 0 18px 0; width:100%;">'
+                + "".join(rows_html)
+                + "</table>"
+            )
+            parts.append(table_html)
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
 
 
 def render_file_preview(path: Path):
@@ -435,28 +564,23 @@ def render_file_preview(path: Path):
             data = path.read_bytes()
             b64 = base64.b64encode(data).decode("utf-8")
             st.markdown(
+                '<div style="border:1px solid #E5E5E5; border-radius:8px; overflow:hidden; '
+                'box-shadow:0 1px 4px rgba(0,0,0,0.06);">'
                 f'<iframe src="data:application/pdf;base64,{b64}" '
-                f'width="100%" height="700" style="border:1px solid #DDDDDD;"></iframe>',
+                'width="100%" height="700" style="border:none; display:block;"></iframe>'
+                "</div>",
                 unsafe_allow_html=True,
             )
         elif suffix in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
             st.image(str(path), use_container_width=True)
         elif suffix == ".hwp":
-            with st.spinner("HWP 파일에서 텍스트를 추출하는 중..."):
-                text = _extract_hwp_text(path)
-            if text.strip():
-                st.caption("⚠️ 텍스트만 추출한 미리보기입니다. 표/이미지/서식은 표시되지 않습니다.")
-                st.text_area("미리보기 내용", text, height=420, label_visibility="collapsed")
-            else:
-                st.info("추출된 텍스트가 없습니다. 다운로드하여 확인해주세요.")
+            with st.spinner("HWP 파일을 문서 형태로 변환하는 중... (표/이미지 포함)"):
+                html_content = _convert_hwp_to_html(path)
+            components.html(html_content, height=650, scrolling=True)
         elif suffix == ".hwpx":
-            with st.spinner("HWPX 파일에서 텍스트를 추출하는 중..."):
-                text = _extract_hwpx_text(path)
-            if text.strip():
-                st.caption("⚠️ 텍스트만 추출한 미리보기입니다. 표/이미지/서식은 표시되지 않습니다.")
-                st.text_area("미리보기 내용", text, height=420, label_visibility="collapsed")
-            else:
-                st.info("추출된 텍스트가 없습니다. 다운로드하여 확인해주세요.")
+            with st.spinner("HWPX 파일을 문서 형태로 변환하는 중... (표 포함)"):
+                blocks = _parse_hwpx_blocks(path)
+            _render_document_blocks(blocks)
         else:
             st.info("이 파일 형식은 미리보기를 지원하지 않습니다. 다운로드하여 확인해주세요.")
     except Exception as e:
