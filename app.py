@@ -266,14 +266,16 @@ if st.session_state.auth_role is None:
             padding-top: 6vh;
         }}
 
-        .login-card-top {{
-            background: #FFFFFF;
+        /* 로그인 카드 전체(로고+입력창+버튼)를 하나의 흰 박스로 묶음 */
+        .st-key-login_box {{
+            background: #FFFFFF !important;
             border-top: 6px solid {BRAND_ORANGE};
             box-shadow: 0 2px 12px rgba(0,0,0,0.12);
-            padding: 45px 40px 8px 40px;
-            text-align: center;
+            padding: 45px 40px 35px 40px;
         }}
-        .login-card-top .login-logo {{
+
+        .login-logo {{
+            text-align: center;
             font-size: 46px;
             font-weight: 800;
             color: {BRAND_ORANGE};
@@ -281,30 +283,23 @@ if st.session_state.auth_role is None:
             line-height: 1;
             margin-bottom: 6px;
         }}
-        .login-card-top .login-subtitle {{
+        .login-subtitle {{
+            text-align: center;
             font-size: 14px;
             color: #444444;
-        }}
-
-        /* 로그인 폼(비밀번호 입력창 + 버튼) 카드 - 위 로고 박스와 이어붙임 */
-        div[data-testid="stForm"] {{
-            background: #FFFFFF !important;
-            border: none !important;
-            box-shadow: 0 2px 12px rgba(0,0,0,0.12);
-            padding: 20px 40px 35px 40px !important;
-            margin-top: -6px;
+            margin-bottom: 24px;
         }}
 
         /* 비밀번호 입력창 박스 스타일 (여러 Streamlit 버전 대응) */
-        div[data-testid="stForm"] div[data-testid="stTextInput"] > div,
-        div[data-testid="stForm"] div[data-baseweb="input"],
-        div[data-testid="stForm"] div[data-baseweb="base-input"] {{
+        .st-key-login_box div[data-testid="stTextInput"] > div,
+        .st-key-login_box div[data-baseweb="input"],
+        .st-key-login_box div[data-baseweb="base-input"] {{
             background-color: #FFFFFF !important;
             border: 1px solid #CCCCCC !important;
             border-radius: 0 !important;
             box-shadow: none !important;
         }}
-        div[data-testid="stForm"] input {{
+        .st-key-login_box input {{
             padding: 12px 14px !important;
             font-size: 15px !important;
             color: #333333 !important;
@@ -313,7 +308,7 @@ if st.session_state.auth_role is None:
         }}
 
         /* Login 버튼 */
-        div[data-testid="stForm"] div[data-testid="stFormSubmitButton"] button {{
+        .st-key-login_box div[data-testid="stFormSubmitButton"] button {{
             background-color: {BRAND_ORANGE} !important;
             color: #FFFFFF !important;
             border: none !important;
@@ -321,10 +316,16 @@ if st.session_state.auth_role is None:
             font-weight: 700 !important;
             font-size: 16px !important;
             padding: 12px 0 !important;
-            margin-top: 10px;
+            margin-top: 6px;
         }}
-        div[data-testid="stForm"] div[data-testid="stFormSubmitButton"] button:hover {{
+        .st-key-login_box div[data-testid="stFormSubmitButton"] button:hover {{
             background-color: {BRAND_ORANGE_DARK} !important;
+        }}
+        /* st.form 자체의 기본 테두리/배경 제거 (구버전 Streamlit 대비 안전장치) */
+        .st-key-login_box div[data-testid="stForm"] {{
+            border: none !important;
+            background: transparent !important;
+            padding: 0 !important;
         }}
         </style>
         """,
@@ -333,20 +334,20 @@ if st.session_state.auth_role is None:
 
     _, login_col, _ = st.columns([1, 1.2, 1])
     with login_col:
-        st.markdown(
-            """
-            <div class="login-card-top">
+        with st.container(key="login_box"):
+            st.markdown(
+                """
                 <div class="login-logo">EGA</div>
                 <div class="login-subtitle">정비사업 입찰공고 수집기</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        with st.form("login_form"):
-            pw_input = st.text_input(
-                "비밀번호", type="password", placeholder="PASSWORD", label_visibility="collapsed"
+                """,
+                unsafe_allow_html=True,
             )
-            submitted = st.form_submit_button("Login", use_container_width=True)
+            with st.form("login_form"):
+                pw_input = st.text_input(
+                    "비밀번호", type="password", placeholder="PASSWORD", label_visibility="collapsed"
+                )
+                submitted = st.form_submit_button("Login", use_container_width=True)
+
 
     if submitted:
         if ADMIN_PASSWORD and pw_input == ADMIN_PASSWORD:
