@@ -172,6 +172,19 @@ st.markdown(
         background-color: {BRAND_ORANGE_LIGHT} !important;
     }}
 
+    /* 탭("오늘의 공고 수집" / "조합별 이력 조회") 글씨 크게 */
+    button[data-baseweb="tab"] {{
+        height: auto;
+        padding: 12px 20px;
+    }}
+    button[data-baseweb="tab"] p {{
+        font-size: 18px !important;
+        font-weight: 700 !important;
+    }}
+    button[data-baseweb="tab"][aria-selected="true"] p {{
+        color: {BRAND_ORANGE} !important;
+    }}
+
     /* 탭(오늘의 공고 수집 / 조합별 이력 조회) 글씨 크게 */
     div[data-baseweb="tab-list"] button {{
         padding: 10px 22px !important;
