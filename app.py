@@ -9,6 +9,10 @@ app.py - 정비사업 입찰공고 수집기 사내 웹앱 (Streamlit)
 import os
 import json
 import shutil
+import base64
+import subprocess
+import zipfile
+import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
@@ -380,6 +384,138 @@ def push_log(msg: str):
 
 
 # ------------------------------------------------------------------
+# 첨부파일 미리보기 (다운로드 없이 내용 확인)
+# ------------------------------------------------------------------
+def _extract_hwp_text(path: Path) -> str:
+    """구버전 HWP(바이너리, v5) 파일에서 텍스트만 추출 (hwp5txt 사용)."""
+    try:
+        result = subprocess.run(
+            ["hwp5txt", str(path)],
+            capture_output=True,
+            timeout=25,
+        )
+    except FileNotFoundError:
+        raise RuntimeError("hwp5txt 실행 파일을 찾을 수 없습니다.")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("파일 변환이 너무 오래 걸려 중단했습니다.")
+    if result.returncode != 0:
+        err = result.stderr.decode("utf-8", errors="ignore").strip()
+        raise RuntimeError(err or "hwp5txt 변환에 실패했습니다.")
+    return result.stdout.decode("utf-8", errors="ignore")
+
+
+def _extract_hwpx_text(path: Path) -> str:
+    """HWPX(zip+xml) 파일에서 텍스트만 추출."""
+    try:
+        texts = []
+        with zipfile.ZipFile(path) as zf:
+            section_names = sorted(
+                n for n in zf.namelist()
+                if "section" in n.lower() and n.lower().endswith(".xml")
+            )
+            for name in section_names:
+                data = zf.read(name)
+                root = ET.fromstring(data)
+                for elem in root.iter():
+                    tag = elem.tag.rsplit("}", 1)[-1]
+                    if tag == "p":
+                        texts.append("\n")
+                    elif tag == "t" and elem.text:
+                        texts.append(elem.text)
+        return "".join(texts).strip()
+    except Exception as e:
+        raise RuntimeError(f"hwpx 파일을 읽는 중 문제가 발생했습니다: {e}")
+
+
+def render_file_preview(path: Path):
+    """지원하는 형식이면 화면에 미리보기를 렌더링, 아니면 안내 문구만 표시."""
+    suffix = path.suffix.lower()
+    try:
+        if suffix == ".pdf":
+            data = path.read_bytes()
+            b64 = base64.b64encode(data).decode("utf-8")
+            st.markdown(
+                f'<iframe src="data:application/pdf;base64,{b64}" '
+                f'width="100%" height="700" style="border:1px solid #DDDDDD;"></iframe>',
+                unsafe_allow_html=True,
+            )
+        elif suffix in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
+            st.image(str(path), use_container_width=True)
+        elif suffix == ".hwp":
+            with st.spinner("HWP 파일에서 텍스트를 추출하는 중..."):
+                text = _extract_hwp_text(path)
+            if text.strip():
+                st.caption("⚠️ 텍스트만 추출한 미리보기입니다. 표/이미지/서식은 표시되지 않습니다.")
+                st.text_area("미리보기 내용", text, height=420, label_visibility="collapsed")
+            else:
+                st.info("추출된 텍스트가 없습니다. 다운로드하여 확인해주세요.")
+        elif suffix == ".hwpx":
+            with st.spinner("HWPX 파일에서 텍스트를 추출하는 중..."):
+                text = _extract_hwpx_text(path)
+            if text.strip():
+                st.caption("⚠️ 텍스트만 추출한 미리보기입니다. 표/이미지/서식은 표시되지 않습니다.")
+                st.text_area("미리보기 내용", text, height=420, label_visibility="collapsed")
+            else:
+                st.info("추출된 텍스트가 없습니다. 다운로드하여 확인해주세요.")
+        else:
+            st.info("이 파일 형식은 미리보기를 지원하지 않습니다. 다운로드하여 확인해주세요.")
+    except Exception as e:
+        st.warning(f"미리보기를 만들 수 없습니다: {e}")
+
+
+def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_file_name: str):
+    """첨부파일 zip 전체 다운로드 + 파일별 미리보기/개별 다운로드 UI를 렌더링."""
+    zip_base = str(BASE_DIR / "output" / f"{key_prefix}_첨부파일_zip")
+    zip_path = shutil.make_archive(zip_base, "zip", root_dir=str(attachment_dir_path))
+    with open(zip_path, "rb") as f:
+        st.download_button(
+            "⬇️ 전체 한 번에 다운로드 (zip)",
+            data=f.read(),
+            file_name=zip_file_name,
+            mime="application/zip",
+            use_container_width=True,
+            key=f"{key_prefix}_zip_dl",
+        )
+    st.divider()
+    st.caption("파일별로 👁 미리보기(다운로드 없이 내용 확인) 또는 ⬇️ 개별 다운로드를 받으실 수 있습니다.")
+
+    if "preview_target" not in st.session_state:
+        st.session_state.preview_target = None
+
+    folders = sorted([f for f in attachment_dir_path.iterdir() if f.is_dir()])
+    if not folders:
+        st.caption("다운로드된 첨부파일이 없습니다.")
+
+    for folder in folders:
+        files = sorted([f for f in folder.glob("*") if f.is_file()])
+        if not files:
+            continue
+        st.markdown(f"**{folder.name}**")
+        for f in files:
+            row_name, row_preview, row_download = st.columns([6, 1.3, 1.3])
+            row_name.write(f"📄 {f.name}")
+            if row_preview.button("👁 미리보기", key=f"prevbtn_{key_prefix}_{folder.name}_{f.name}"):
+                st.session_state.preview_target = str(f)
+            with open(f, "rb") as fh:
+                row_download.download_button(
+                    "⬇️ 다운로드",
+                    data=fh.read(),
+                    file_name=f.name,
+                    key=f"dl_{key_prefix}_{folder.name}_{f.name}",
+                )
+            if st.session_state.preview_target == str(f):
+                with st.container(border=True):
+                    pc_title, pc_close = st.columns([8, 1])
+                    pc_title.markdown(f"**🔎 미리보기 — {f.name}**")
+                    if pc_close.button("닫기", key=f"closeprev_{key_prefix}_{folder.name}_{f.name}"):
+                        st.session_state.preview_target = None
+                        st.rerun()
+                    else:
+                        render_file_preview(f)
+        st.write("")
+
+
+# ------------------------------------------------------------------
 # 사이드바 - 실행 옵션 + 필터 편집
 # ------------------------------------------------------------------
 st.sidebar.header("⚙️ 실행 옵션")
@@ -575,37 +711,12 @@ with tab1:
 
         attachment_dir_path = core.DEFAULT_ATTACHMENT_DIR
         if attachment_dir_path.exists() and any(attachment_dir_path.iterdir()):
-            with st.expander("📎 공고문/지침서 다운로드", expanded=False):
-                zip_base = str(BASE_DIR / "output" / "공고문_첨부파일")
-                zip_path = shutil.make_archive(zip_base, "zip", root_dir=str(attachment_dir_path))
-                with open(zip_path, "rb") as f:
-                    st.download_button(
-                        "⬇️ 전체 한 번에 다운로드 (zip)",
-                        data=f.read(),
-                        file_name="공고문_첨부파일.zip",
-                        mime="application/zip",
-                        use_container_width=True,
-                    )
-                st.divider()
-                st.caption("또는 필요한 파일만 하나씩 받으실 수 있습니다.")
-
-                folders = sorted([f for f in attachment_dir_path.iterdir() if f.is_dir()])
-                if not folders:
-                    st.caption("다운로드된 첨부파일이 없습니다.")
-                for folder in folders:
-                    files = sorted([f for f in folder.glob("*") if f.is_file()])
-                    if not files:
-                        continue
-                    st.markdown(f"**{folder.name}**")
-                    for f in files:
-                        with open(f, "rb") as fh:
-                            st.download_button(
-                                f.name,
-                                data=fh.read(),
-                                file_name=f.name,
-                                key=f"dl_{folder.name}_{f.name}",
-                            )
-                    st.write("")
+            with st.expander("📎 공고문/지침서 다운로드 · 미리보기", expanded=False):
+                render_attachment_browser(
+                    attachment_dir_path,
+                    key_prefix="today",
+                    zip_file_name="공고문_첨부파일.zip",
+                )
 
 with tab2:
     st.markdown(
@@ -691,38 +802,12 @@ with tab2:
         if hist_result.attachment_dir:
             hist_attach_dir = Path(hist_result.attachment_dir)
             if hist_attach_dir.exists() and any(hist_attach_dir.iterdir()):
-                with st.expander("📎 공고문/지침서 다운로드", expanded=False):
-                    zip_base = str(BASE_DIR / "output" / f"이력조회_{institution_keyword}_첨부파일")
-                    zip_path = shutil.make_archive(zip_base, "zip", root_dir=str(hist_attach_dir))
-                    with open(zip_path, "rb") as f:
-                        st.download_button(
-                            "⬇️ 전체 한 번에 다운로드 (zip)",
-                            data=f.read(),
-                            file_name="공고문_첨부파일.zip",
-                            mime="application/zip",
-                            use_container_width=True,
-                            key="hist_zip_dl",
-                        )
-                    st.divider()
-                    st.caption("또는 필요한 파일만 하나씩 받으실 수 있습니다.")
-
-                    hist_folders = sorted([f for f in hist_attach_dir.iterdir() if f.is_dir()])
-                    if not hist_folders:
-                        st.caption("다운로드된 첨부파일이 없습니다.")
-                    for folder in hist_folders:
-                        files = sorted([f for f in folder.glob("*") if f.is_file()])
-                        if not files:
-                            continue
-                        st.markdown(f"**{folder.name}**")
-                        for f in files:
-                            with open(f, "rb") as fh:
-                                st.download_button(
-                                    f.name,
-                                    data=fh.read(),
-                                    file_name=f.name,
-                                    key=f"hist_dl_{folder.name}_{f.name}",
-                                )
-                        st.write("")
+                with st.expander("📎 공고문/지침서 다운로드 · 미리보기", expanded=False):
+                    render_attachment_browser(
+                        hist_attach_dir,
+                        key_prefix="hist",
+                        zip_file_name="공고문_첨부파일.zip",
+                    )
 
 st.divider()
 with st.expander("📜 최근 실행 로그 파일 보기"):
