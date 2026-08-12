@@ -257,20 +257,75 @@ if "auth_role" not in st.session_state:
 
 if st.session_state.auth_role is None:
     st.markdown(
-        """
-        <div class="app-header">
-            <div class="logo">EGA</div>
-            <div class="title-block">
-                <h1>정비사업 입찰공고 수집기</h1>
-                <p>비밀번호를 입력하고 입장해주세요.</p>
-            </div>
+        f"""
+        <style>
+        .stApp {{ background-color: #D9D9D9; }}
+        .main .block-container {{
+            max-width: 480px;
+            padding-top: 5vh;
+        }}
+        .login-card {{
+            background: #FFFFFF;
+            border-top: 6px solid {BRAND_ORANGE};
+            box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+            padding: 45px 40px 8px 40px;
+            text-align: center;
+            margin-bottom: -8px;
+        }}
+        .login-card .login-logo {{
+            font-size: 46px;
+            font-weight: 800;
+            color: {BRAND_ORANGE};
+            letter-spacing: -1px;
+            line-height: 1;
+            margin-bottom: 6px;
+        }}
+        .login-card .login-subtitle {{
+            font-size: 14px;
+            color: #444444;
+            margin-bottom: 6px;
+        }}
+        div[data-testid="stForm"] {{
+            background: #FFFFFF;
+            border: none;
+            padding: 0 40px 30px 40px;
+        }}
+        div[data-testid="stForm"] div[data-baseweb="input"],
+        div[data-testid="stForm"] div[data-baseweb="base-input"] {{
+            background-color: #FFFFFF !important;
+            border: 1px solid #CCCCCC !important;
+            border-radius: 0 !important;
+        }}
+        div[data-testid="stForm"] input {{
+            padding: 12px 14px !important;
+            font-size: 15px !important;
+            color: #333333 !important;
+            -webkit-text-fill-color: #333333 !important;
+        }}
+        div[data-testid="stForm"] div[data-testid="stFormSubmitButton"] button {{
+            background-color: {BRAND_ORANGE} !important;
+            color: #FFFFFF !important;
+            border: none !important;
+            border-radius: 0 !important;
+            font-weight: 700 !important;
+            font-size: 16px !important;
+            padding: 12px 0 !important;
+            margin-top: 6px;
+        }}
+        div[data-testid="stForm"] div[data-testid="stFormSubmitButton"] button:hover {{
+            background-color: {BRAND_ORANGE_DARK} !important;
+        }}
+        </style>
+        <div class="login-card">
+            <div class="login-logo">EGA</div>
+            <div class="login-subtitle">정비사업 입찰공고 수집기</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
     with st.form("login_form"):
-        pw_input = st.text_input("비밀번호", type="password")
-        submitted = st.form_submit_button("입장하기", type="primary", use_container_width=True)
+        pw_input = st.text_input("비밀번호", type="password", placeholder="PASSWORD", label_visibility="collapsed")
+        submitted = st.form_submit_button("Login", use_container_width=True)
     if submitted:
         if ADMIN_PASSWORD and pw_input == ADMIN_PASSWORD:
             st.session_state.auth_role = "admin"
