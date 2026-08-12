@@ -4,3 +4,4 @@ openpyxl
 python-dotenv
 pypdf
 olefile
+pyhwp
