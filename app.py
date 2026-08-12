@@ -260,19 +260,20 @@ if st.session_state.auth_role is None:
         f"""
         <style>
         .stApp {{ background-color: #D9D9D9; }}
-        .main .block-container {{
-            max-width: 480px;
-            padding-top: 5vh;
+
+        /* 로그인 화면일 때만: 위쪽 여백 확보 */
+        div[data-testid="stAppViewContainer"] .main .block-container {{
+            padding-top: 6vh;
         }}
-        .login-card {{
+
+        .login-card-top {{
             background: #FFFFFF;
             border-top: 6px solid {BRAND_ORANGE};
             box-shadow: 0 2px 12px rgba(0,0,0,0.12);
             padding: 45px 40px 8px 40px;
             text-align: center;
-            margin-bottom: -8px;
         }}
-        .login-card .login-logo {{
+        .login-card-top .login-logo {{
             font-size: 46px;
             font-weight: 800;
             color: {BRAND_ORANGE};
@@ -280,28 +281,38 @@ if st.session_state.auth_role is None:
             line-height: 1;
             margin-bottom: 6px;
         }}
-        .login-card .login-subtitle {{
+        .login-card-top .login-subtitle {{
             font-size: 14px;
             color: #444444;
-            margin-bottom: 6px;
         }}
+
+        /* 로그인 폼(비밀번호 입력창 + 버튼) 카드 - 위 로고 박스와 이어붙임 */
         div[data-testid="stForm"] {{
-            background: #FFFFFF;
-            border: none;
-            padding: 0 40px 30px 40px;
+            background: #FFFFFF !important;
+            border: none !important;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+            padding: 20px 40px 35px 40px !important;
+            margin-top: -6px;
         }}
+
+        /* 비밀번호 입력창 박스 스타일 (여러 Streamlit 버전 대응) */
+        div[data-testid="stForm"] div[data-testid="stTextInput"] > div,
         div[data-testid="stForm"] div[data-baseweb="input"],
         div[data-testid="stForm"] div[data-baseweb="base-input"] {{
             background-color: #FFFFFF !important;
             border: 1px solid #CCCCCC !important;
             border-radius: 0 !important;
+            box-shadow: none !important;
         }}
         div[data-testid="stForm"] input {{
             padding: 12px 14px !important;
             font-size: 15px !important;
             color: #333333 !important;
             -webkit-text-fill-color: #333333 !important;
+            background-color: transparent !important;
         }}
+
+        /* Login 버튼 */
         div[data-testid="stForm"] div[data-testid="stFormSubmitButton"] button {{
             background-color: {BRAND_ORANGE} !important;
             color: #FFFFFF !important;
@@ -310,22 +321,33 @@ if st.session_state.auth_role is None:
             font-weight: 700 !important;
             font-size: 16px !important;
             padding: 12px 0 !important;
-            margin-top: 6px;
+            margin-top: 10px;
         }}
         div[data-testid="stForm"] div[data-testid="stFormSubmitButton"] button:hover {{
             background-color: {BRAND_ORANGE_DARK} !important;
         }}
         </style>
-        <div class="login-card">
-            <div class="login-logo">EGA</div>
-            <div class="login-subtitle">정비사업 입찰공고 수집기</div>
-        </div>
         """,
         unsafe_allow_html=True,
     )
-    with st.form("login_form"):
-        pw_input = st.text_input("비밀번호", type="password", placeholder="PASSWORD", label_visibility="collapsed")
-        submitted = st.form_submit_button("Login", use_container_width=True)
+
+    _, login_col, _ = st.columns([1, 1.2, 1])
+    with login_col:
+        st.markdown(
+            """
+            <div class="login-card-top">
+                <div class="login-logo">EGA</div>
+                <div class="login-subtitle">정비사업 입찰공고 수집기</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        with st.form("login_form"):
+            pw_input = st.text_input(
+                "비밀번호", type="password", placeholder="PASSWORD", label_visibility="collapsed"
+            )
+            submitted = st.form_submit_button("Login", use_container_width=True)
+
     if submitted:
         if ADMIN_PASSWORD and pw_input == ADMIN_PASSWORD:
             st.session_state.auth_role = "admin"
