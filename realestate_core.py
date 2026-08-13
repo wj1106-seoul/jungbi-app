@@ -133,9 +133,9 @@ REGION_CODES = {
 # 국토부 API 조회
 # =========================================================
 
-def _get_month_data(service_key: str, lawd_cd: str, deal_ymd: str):
+def _get_month_data(service_key: str, lawd_cd: str, deal_ymd: str, operation: str = "getRTMSDataSvcAptTrade", service_id: str = "RTMSDataSvcAptTrade"):
     url = (
-        "https://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade"
+        f"https://apis.data.go.kr/1613000/{service_id}/{operation}"
         f"?serviceKey={service_key}"
         f"&LAWD_CD={lawd_cd}"
         f"&DEAL_YMD={deal_ymd}"
@@ -454,6 +454,256 @@ def build_excel_bytes(df: pd.DataFrame, sido: str, sigungu: str, dong: str, mont
     summary.freeze_panes = "A5"
     summary.sheet_view.showGridLines = False
     summary.sheet_view.zoomScale = 90
+
+    out_buf = io.BytesIO()
+    wb.save(out_buf)
+    return out_buf.getvalue()
+
+
+# =========================================================
+# 상업·업무용 부동산 매매 실거래가
+# (국토교통부_상업업무용 부동산 매매 실거래가 자료: RTMSDataSvcNrgTrade)
+# 아파트와 API/필드가 완전히 다릅니다 - 단지명이 없고, 건물유형/건물주용도/건물면적/대지면적으로 식별합니다.
+# =========================================================
+
+def fetch_commercial_transactions(
+    service_key: str,
+    lawd_cd: str,
+    months: int,
+    dong_filter: str = "",
+    progress_cb: ProgressCB = None,
+) -> pd.DataFrame:
+    """지정 지역의 최근 N개월 상업·업무용 부동산 매매 실거래가를 조회해 DataFrame으로 반환."""
+    if not service_key:
+        raise RuntimeError("실거래가 API 인증키(SERVICE_KEY)가 설정되지 않았습니다.")
+
+    all_data = []
+    today = datetime.today()
+    dong_filter = (dong_filter or "").strip()
+
+    for i in range(months):
+        target_date = today - relativedelta(months=i)
+        deal_ymd = target_date.strftime("%Y%m")
+        if progress_cb:
+            progress_cb(f"{deal_ymd} 상업·업무용 실거래가 조회 중...")
+
+        items = _get_month_data(
+            service_key, lawd_cd, deal_ymd,
+            operation="getRTMSDataSvcNrgTrade", service_id="RTMSDataSvcNrgTrade",
+        )
+
+        for item in items:
+            dong_name = (item.findtext("umdNm", "") or "").strip()
+            if dong_filter and dong_filter not in dong_name:
+                continue
+
+            jibun = (item.findtext("jibun", "") or "").strip()
+            building_type = (item.findtext("buildingType", "") or "").strip()
+            building_use = (item.findtext("buildingUse", "") or "").strip()
+            floor = (item.findtext("floor", "") or "").strip()
+            deal_amount = item.findtext("dealAmount", "0") or "0"
+            building_ar = item.findtext("buildingAr", "0") or "0"
+            plottage_ar = item.findtext("plottageAr", "0") or "0"
+            year = item.findtext("dealYear", "") or ""
+            month = item.findtext("dealMonth", "") or ""
+            day = item.findtext("dealDay", "") or ""
+
+            try:
+                deal_amount_manwon = int(deal_amount.replace(",", "").strip())
+            except (TypeError, ValueError):
+                continue
+            deal_amount_won = deal_amount_manwon * 10000
+
+            try:
+                building_ar_m2 = float(building_ar) if building_ar else 0.0
+            except ValueError:
+                building_ar_m2 = 0.0
+            try:
+                plottage_ar_m2 = float(plottage_ar) if plottage_ar else 0.0
+            except ValueError:
+                plottage_ar_m2 = 0.0
+
+            # 건물면적 기준 평당가(없으면 대지면적으로 대체, 둘 다 없으면 0)
+            basis_m2 = building_ar_m2 or plottage_ar_m2
+            basis_py = basis_m2 / 3.3058 if basis_m2 else 0
+            price_per_py = deal_amount_won / basis_py if basis_py > 0 else 0
+
+            try:
+                contract_date = f"{year}-{int(month):02d}-{int(day):02d}"
+            except (TypeError, ValueError):
+                contract_date = ""
+
+            all_data.append({
+                "법정동": dong_name,
+                "지번": jibun,
+                "건물유형": building_type,
+                "건물주용도": building_use,
+                "계약일": contract_date,
+                "거래금액(원)": deal_amount_won,
+                "건물면적(㎡)": round(building_ar_m2, 2),
+                "대지면적(㎡)": round(plottage_ar_m2, 2),
+                "건물면적(평)": round(building_ar_m2 / 3.3058, 2) if building_ar_m2 else 0,
+                "평당가(원)": round(price_per_py),
+                "층": floor,
+            })
+
+    if not all_data:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(all_data)
+    df = df.sort_values(by="계약일", ascending=False).reset_index(drop=True)
+    return df
+
+
+def build_commercial_excel_bytes(df: pd.DataFrame, sido: str, sigungu: str, dong: str, months) -> bytes:
+    if df.empty:
+        raise RuntimeError("내보낼 데이터가 없습니다. 먼저 조회를 실행해주세요.")
+
+    export_df = df[[
+        "법정동", "지번", "건물유형", "건물주용도", "계약일", "거래금액(원)",
+        "건물면적(㎡)", "대지면적(㎡)", "평당가(원)", "층",
+    ]].copy()
+    export_df["비고"] = ""
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        export_df.to_excel(writer, sheet_name="실거래가 현황", index=False, startrow=9)
+    buf.seek(0)
+
+    wb = load_workbook(buf)
+    ws = wb["실거래가 현황"]
+
+    navy = "1F4E78"
+    blue = "D9EAF7"
+    light_blue = "EDF4F8"
+    gray = "F2F2F2"
+    white = "FFFFFF"
+    dark_gray = "555555"
+    border_color = "B7C3CC"
+    thin = Side(style="thin", color=border_color)
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    ws.merge_cells("A1:K1")
+    ws["A1"] = "상업·업무용 부동산 실거래가 조사 결과"
+    ws["A1"].font = Font(name="맑은 고딕", size=20, bold=True, color=white)
+    ws["A1"].fill = PatternFill("solid", fgColor=navy)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[1].height = 38
+
+    location_text = f"{sido} {sigungu}"
+    if dong:
+        location_text += f" {dong}"
+
+    ws["A3"] = "조사지역"
+    ws.merge_cells("B3:C3")
+    ws["B3"] = location_text
+    ws["D3"] = "조회기간"
+    ws.merge_cells("E3:F3")
+    ws["E3"] = f"최근 {months}개월"
+    ws["G3"] = "조회일"
+    ws.merge_cells("H3:K3")
+    ws["H3"] = datetime.today().strftime("%Y-%m-%d")
+
+    for cell_name in ["A3", "D3", "G3"]:
+        cell = ws[cell_name]
+        cell.font = Font(name="맑은 고딕", size=10, bold=True, color=navy)
+        cell.fill = PatternFill("solid", fgColor=gray)
+        cell.border = border
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for range_name in ["B3:C3", "E3:F3", "H3:K3"]:
+        for row_cells in ws[range_name]:
+            for cell in row_cells:
+                cell.border = border
+                cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[3].height = 24
+
+    count = len(df)
+    avg_price = int(df["거래금액(원)"].mean())
+    avg_py_price = int(df.loc[df["평당가(원)"] > 0, "평당가(원)"].mean()) if (df["평당가(원)"] > 0).any() else 0
+    max_price = int(df["거래금액(원)"].max())
+    min_price = int(df["거래금액(원)"].min())
+
+    kpi_ranges = [
+        ("A5:B5", "A6:B6", "총 거래건수", count),
+        ("C5:D5", "C6:D6", "평균 거래가", avg_price),
+        ("E5:F5", "E6:F6", "평균 평당가", avg_py_price),
+        ("G5:H5", "G6:H6", "최고 거래가", max_price),
+        ("I5:K5", "I6:K6", "최저 거래가", min_price),
+    ]
+    for title_range, value_range, title_text, value in kpi_ranges:
+        ws.merge_cells(title_range)
+        ws.merge_cells(value_range)
+        title_cell = ws[title_range.split(":")[0]]
+        value_cell = ws[value_range.split(":")[0]]
+        title_cell.value = title_text
+        value_cell.value = value
+        title_cell.font = Font(name="맑은 고딕", size=10, bold=True, color=navy)
+        title_cell.fill = PatternFill("solid", fgColor=blue)
+        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+        value_cell.font = Font(name="맑은 고딕", size=12, bold=True, color="222222")
+        value_cell.fill = PatternFill("solid", fgColor=white)
+        value_cell.alignment = Alignment(horizontal="center", vertical="center")
+        for row_cells in ws[title_range]:
+            for cell in row_cells:
+                cell.border = border
+        for row_cells in ws[value_range]:
+            for cell in row_cells:
+                cell.border = border
+
+    ws["A6"].number_format = '#,##0"건"'
+    for cell_name in ["C6", "E6", "G6", "I6"]:
+        ws[cell_name].number_format = '#,##0"원"'
+    ws.row_dimensions[5].height = 23
+    ws.row_dimensions[6].height = 30
+
+    ws.merge_cells("A8:K8")
+    ws["A8"] = (
+        "※ 국토교통부 실거래가 공개자료 기준 | 금액은 원 단위 | 평당가는 건물면적(없으면 대지면적) 기준 | 비고란은 사용자 입력용"
+    )
+    ws["A8"].font = Font(name="맑은 고딕", size=9, color=dark_gray)
+    ws["A8"].alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[8].height = 20
+
+    header_row = 10
+    for cell in ws[header_row]:
+        cell.font = Font(name="맑은 고딕", size=10, bold=True, color=white)
+        cell.fill = PatternFill("solid", fgColor=navy)
+        cell.border = border
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[header_row].height = 27
+
+    max_row = ws.max_row
+    for row in range(header_row + 1, max_row + 1):
+        row_fill = PatternFill("solid", fgColor=light_blue if row % 2 == 0 else white)
+        for col in range(1, 12):
+            cell = ws.cell(row=row, column=col)
+            cell.fill = row_fill
+            cell.border = border
+            cell.font = Font(name="맑은 고딕", size=10)
+            cell.alignment = Alignment(vertical="center")
+        for col in [1, 2, 3, 4, 5, 10]:
+            ws.cell(row=row, column=col).alignment = Alignment(horizontal="center", vertical="center")
+        for col in [6, 7, 8, 9]:
+            ws.cell(row=row, column=col).number_format = "#,##0"
+            ws.cell(row=row, column=col).alignment = Alignment(horizontal="right", vertical="center")
+        ws.cell(row=row, column=11).alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+        ws.row_dimensions[row].height = 21
+
+    widths = {"A": 14, "B": 11, "C": 20, "D": 16, "E": 13, "F": 16, "G": 13, "H": 13, "I": 16, "J": 8, "K": 25}
+    for col, width in widths.items():
+        ws.column_dimensions[col].width = width
+
+    ws.auto_filter.ref = f"A{header_row}:K{max_row}"
+    ws.freeze_panes = "A11"
+    ws.sheet_view.showGridLines = False
+    ws.sheet_view.zoomScale = 90
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_A4
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.print_title_rows = "10:10"
 
     out_buf = io.BytesIO()
     wb.save(out_buf)
