@@ -6,3 +6,4 @@ pypdf
 olefile
 pyhwp
 python-dateutil
+python-hwpx
