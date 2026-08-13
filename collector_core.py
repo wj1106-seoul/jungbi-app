@@ -1157,7 +1157,15 @@ def run_pipeline(
     days_back: int = 1,
     download_attachments: bool = True,
     progress_cb: ProgressCB = None,
+    start_date=None,
+    end_date=None,
 ) -> PipelineResult:
+    """
+    조회 기간은 다음 세 가지 모드 중 하나로 결정됩니다 (우선순위 순):
+      1) start_date와 end_date를 둘 다 넘기면: 그 날짜 범위(포함) 전체를 조회합니다.
+      2) yesterday_only=True (기본값): 직전 영업일만 조회합니다.
+      3) yesterday_only=False: days_back일 전부터 지금까지 조회합니다.
+    """
     logger = _Logger("today", progress_cb)
     try:
         if not service_key:
@@ -1168,7 +1176,16 @@ def run_pipeline(
         include_title_keywords = cfg.get("include_title_keywords", DEFAULT_INCLUDE_TITLE_KEYWORDS)
         exclude_title_keywords = cfg.get("exclude_title_keywords", DEFAULT_EXCLUDE_TITLE_KEYWORDS)
 
-        if yesterday_only:
+        if start_date is not None and end_date is not None:
+            start_dt = datetime.combine(start_date, datetime.min.time())
+            end_dt = datetime.combine(end_date, datetime.min.time()) + timedelta(days=1, minutes=-1)
+            if end_dt < start_dt:
+                logger.close()
+                return PipelineResult(ok=False, message="종료일이 시작일보다 앞설 수 없습니다.")
+            date_chunks = _make_date_chunks_for_range(start_dt, end_dt)
+            target_day = start_dt
+            restrict_to_date = None
+        elif yesterday_only:
             target_day, date_chunks = _make_date_chunks_for_yesterday(look_ahead_for_cancel=True)
             restrict_to_date = target_day.strftime("%Y-%m-%d")
         else:
@@ -1236,7 +1253,10 @@ def run_pipeline(
         df_out = df[FULL_COLS].copy()
         df_out["연번"] = range(1, len(df_out) + 1)
 
-        title_str = target_day.strftime("%Y-%m-%d")
+        if start_date is not None and end_date is not None:
+            title_str = f"{start_date.strftime('%Y-%m-%d')}~{end_date.strftime('%Y-%m-%d')}"
+        else:
+            title_str = target_day.strftime("%Y-%m-%d")
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         excel_path = OUTPUT_DIR / f"정비사업입찰공고_{title_str}_{ts}.xlsx"
         _write_excel(df_out, excel_path, title_str)
