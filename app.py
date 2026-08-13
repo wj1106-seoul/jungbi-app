@@ -24,6 +24,7 @@ import pandas as pd
 import altair as alt
 
 import collector_core as core
+import realestate_core as re_core
 
 st.set_page_config(page_title="정비사업 입찰공고 수집기", page_icon="🏗️", layout="wide")
 
@@ -725,7 +726,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab1, tab2 = st.tabs(["📅 오늘의 공고 수집", "🏢 조합별 이력 조회"])
+tab1, tab2, tab3 = st.tabs(["📅 오늘의 공고 수집", "🏢 조합별 이력 조회", "🏠 아파트 실거래가 조회"])
 
 with tab1:
     col_run, col_status = st.columns([1, 4])
@@ -932,6 +933,107 @@ with tab2:
                         key_prefix="hist",
                         zip_file_name="공고문_첨부파일.zip",
                     )
+
+with tab3:
+    st.subheader("🏠 전국 아파트 실거래가 조회")
+    st.caption("국토교통부 실거래가 공개 API를 이용해 아파트 매매 실거래가를 조회합니다.")
+
+    molit_key = get_secret("MOLIT_SERVICE_KEY")
+    if not molit_key:
+        st.warning(
+            "실거래가 조회용 인증키(MOLIT_SERVICE_KEY)가 설정되어 있지 않습니다. "
+            "관리자에게 Streamlit Cloud Secrets 설정을 요청해주세요."
+        )
+
+    re_col1, re_col2, re_col3, re_col4 = st.columns([1.2, 1.5, 1, 0.8])
+    with re_col1:
+        re_sido = st.selectbox("시·도", list(re_core.REGION_CODES.keys()), index=list(re_core.REGION_CODES.keys()).index("경기도"), key="re_sido")
+    with re_col2:
+        sigungu_options = list(re_core.REGION_CODES.get(re_sido, {}).keys())
+        default_idx = sigungu_options.index("성남시 분당구") if "성남시 분당구" in sigungu_options else 0
+        re_sigungu = st.selectbox("시·군·구", sigungu_options, index=default_idx, key="re_sigungu")
+    with re_col3:
+        re_months = st.selectbox("조회기간(개월)", [1, 3, 6, 12, 24, 36, 60], index=3, key="re_months")
+    with re_col4:
+        re_dong = st.text_input("동 검색(선택)", key="re_dong", placeholder="예: 정자동")
+
+    re_run = st.button("🔍 실거래가 조회", type="primary", key="re_run_btn")
+
+    if "re_df" not in st.session_state:
+        st.session_state.re_df = pd.DataFrame()
+        st.session_state.re_meta = {}
+
+    if re_run:
+        lawd_cd = re_core.REGION_CODES.get(re_sido, {}).get(re_sigungu, "")
+        if not molit_key:
+            st.error("인증키가 없어 조회할 수 없습니다.")
+        elif not lawd_cd:
+            st.error("시·도/시·군·구를 다시 선택해주세요.")
+        else:
+            re_status = st.empty()
+
+            def _re_progress(msg):
+                re_status.info(msg)
+
+            try:
+                with st.spinner("실거래가 조회 중..."):
+                    df_re = re_core.fetch_transactions(
+                        molit_key, lawd_cd, re_months, re_dong, progress_cb=_re_progress
+                    )
+                re_status.empty()
+                if df_re.empty:
+                    st.info("조건에 맞는 실거래가가 없습니다.")
+                    st.session_state.re_df = pd.DataFrame()
+                else:
+                    st.session_state.re_df = df_re
+                    st.session_state.re_meta = {
+                        "sido": re_sido, "sigungu": re_sigungu, "dong": re_dong, "months": re_months,
+                    }
+                    st.success(f"{len(df_re):,}건 조회 완료")
+            except Exception as e:
+                re_status.empty()
+                st.error(f"조회 중 오류가 발생했습니다: {e}")
+
+    df_re_display = st.session_state.get("re_df", pd.DataFrame())
+    if not df_re_display.empty:
+        count = len(df_re_display)
+        avg_price = int(df_re_display["거래금액(원)"].mean())
+        avg_py_price = int(df_re_display["평당가(원)"].mean())
+        max_price = int(df_re_display["거래금액(원)"].max())
+        min_price = int(df_re_display["거래금액(원)"].min())
+
+        kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
+        kpi1.metric("총 거래건수", f"{count:,}건")
+        kpi2.metric("평균 거래가", f"{avg_price:,}원")
+        kpi3.metric("평균 평당가", f"{avg_py_price:,}원")
+        kpi4.metric("최고 거래가", f"{max_price:,}원")
+        kpi5.metric("최저 거래가", f"{min_price:,}원")
+
+        st.dataframe(
+            df_re_display[["법정동", "단지명", "계약일", "거래금액(원)", "전용면적(㎡)", "전용면적(평)", "평당가(원)", "층"]],
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        meta = st.session_state.re_meta
+        try:
+            excel_bytes = re_core.build_excel_bytes(
+                df_re_display, meta.get("sido", ""), meta.get("sigungu", ""),
+                meta.get("dong", ""), meta.get("months", ""),
+            )
+            dong_part = f"_{meta.get('dong')}" if meta.get("dong") else ""
+            file_name = f"{meta.get('sido')}_{meta.get('sigungu')}{dong_part}_아파트_실거래가.xlsx"
+            st.download_button(
+                "⬇️ 엑셀 보고서 다운로드",
+                data=excel_bytes,
+                file_name=file_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+            )
+        except Exception as e:
+            st.warning(f"엑셀 생성 중 문제가 발생했습니다: {e}")
+    else:
+        st.caption("시·도 → 시·군·구 → 기간을 선택한 뒤 조회 버튼을 눌러주세요.")
 
 st.divider()
 with st.expander("📜 최근 실행 로그 파일 보기"):
