@@ -25,6 +25,8 @@ import altair as alt
 
 import collector_core as core
 import realestate_core as re_core
+import report_core
+import report_hwpx
 
 st.set_page_config(page_title="정비사업 입찰공고 수집기", page_icon="🏗️", layout="wide")
 
@@ -740,8 +742,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab1, tab2, tab3 = st.tabs([
-    "📅 오늘의 공고 수집", "🏢 조합별 이력 조회", "🏘️ 실거래가 조사",
+tab1, tab2, tab3, tab4 = st.tabs([
+    "📅 오늘의 공고 수집", "🏢 조합별 이력 조회", "🏘️ 실거래가 조사", "📊 월간 분석 보고서",
 ])
 
 with tab1:
@@ -1167,6 +1169,85 @@ with tab3:
                 st.warning(f"엑셀 생성 중 문제가 발생했습니다: {e}")
         else:
             st.caption("시·도 → 시·군·구 → 기간을 선택한 뒤 조회 버튼을 눌러주세요.")
+
+with tab4:
+    st.subheader("📊 월간 분석 보고서 (관리자 전용)")
+
+    if not is_admin:
+        st.info("이 기능은 관리자 로그인 시에만 사용할 수 있습니다.")
+    else:
+        st.caption(
+            "마스터 엑셀(응찰업체별 데이터가 담긴 '2026 정비사업 입찰공고 정리내역' 시트 포함)을 업로드하면, "
+            "집계시트 11개를 다시 계산하고 한글(HWPX) 분석 보고서를 자동으로 만들어드립니다. "
+            "마스터 원본 데이터와 수식은 그대로 보존됩니다."
+        )
+
+        uploaded_master = st.file_uploader(
+            "마스터 엑셀 업로드 (.xlsx)", type=["xlsx"], key="report_master_upload"
+        )
+
+        if "report_excel_bytes" not in st.session_state:
+            st.session_state.report_excel_bytes = None
+            st.session_state.report_hwpx_bytes = None
+
+        gen_clicked = st.button(
+            "🔄 보고서 생성", type="primary", key="report_gen_btn",
+            disabled=uploaded_master is None,
+        )
+
+        if gen_clicked and uploaded_master is not None:
+            input_bytes = uploaded_master.read()
+            report_status = st.empty()
+
+            def _report_progress(msg):
+                report_status.info(msg)
+
+            try:
+                with st.spinner("집계시트 재계산 및 보고서 생성 중... (데이터 양에 따라 시간이 걸릴 수 있어요)"):
+                    excel_bytes = report_core.refresh_excel_bytes(input_bytes, progress_cb=_report_progress)
+                    report_data = report_core.build_report_data(input_bytes)
+                    hwpx_bytes = report_hwpx.build_report_hwpx_bytes(report_data)
+                report_status.empty()
+                st.session_state.report_excel_bytes = excel_bytes
+                st.session_state.report_hwpx_bytes = hwpx_bytes
+                st.session_state.report_file_stem = Path(uploaded_master.name).stem
+                st.success(f"생성 완료! (공고 {report_data['총공고수']:,}건 · 사업장 {report_data['총사업장수']:,}개소)")
+            except Exception as e:
+                report_status.empty()
+                st.error(f"보고서 생성 중 오류가 발생했습니다: {e}")
+
+        if st.session_state.get("report_excel_bytes"):
+            st.divider()
+            stem = st.session_state.get("report_file_stem", "정비사업_정리내역")
+            dl_col1, dl_col2 = st.columns(2)
+            with dl_col1:
+                st.download_button(
+                    "⬇️ 갱신된 엑셀 다운로드",
+                    data=st.session_state.report_excel_bytes,
+                    file_name=f"{stem}_갱신.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
+                    key="report_excel_dl",
+                )
+            with dl_col2:
+                st.download_button(
+                    "⬇️ 한글 분석 보고서 다운로드",
+                    data=st.session_state.report_hwpx_bytes,
+                    file_name=f"{stem}_분석보고서.hwpx",
+                    mime="application/octet-stream",
+                    type="primary",
+                    key="report_hwpx_dl",
+                )
+
+        with st.expander("ℹ️ 알려진 한계 (참고)"):
+            st.markdown(
+                "- **파이프라인① 사업장 진행단계**: 친환경/CM/구조 등 드문 카테고리 단독 사업장의 경계 판정이 "
+                "원본 수기 스냅샷과 완전히 일치하지 않을 수 있습니다 (전체 대비 약 2% 수준의 차이).\n"
+                "- **업체네트워크 '전문분야별 클러스터'**: 편집자 판단이 들어가는 분류라 자동화 대상에서 제외했습니다. "
+                "응찰 상위 업체·동시등장 상위 쌍은 자동 계산됩니다.\n"
+                "- **한글 보고서의 해석 문장**: 계산된 순위/수치를 템플릿에 자동으로 대입하는 방식입니다. "
+                "특정 조합명을 짚어 설명하는 깊은 해석까지는 자동화되어 있지 않아, 생성 후 한 번 검토를 권장합니다."
+            )
 
 st.divider()
 with st.expander("📜 최근 실행 로그 파일 보기"):
