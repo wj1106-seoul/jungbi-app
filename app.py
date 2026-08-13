@@ -670,11 +670,25 @@ if not service_key:
         "로컬 실행: .env 파일 확인 / Streamlit Cloud: Secrets 설정 확인"
     )
 
-period_mode = st.sidebar.radio("조회 기간", ["직전 영업일만", "최근 N일"], index=0)
+period_mode = st.sidebar.radio("조회 기간", ["직전 영업일만", "최근 N일", "특정 기간 검색"], index=0)
 yesterday_only = period_mode == "직전 영업일만"
 days_back = 1
-if not yesterday_only:
+search_start_date = None
+search_end_date = None
+if period_mode == "최근 N일":
     days_back = st.sidebar.number_input("최근 며칠", min_value=1, max_value=30, value=3)
+elif period_mode == "특정 기간 검색":
+    default_start = datetime(datetime.now().year, 1, 1).date()
+    default_end = datetime.now().date()
+    date_range = st.sidebar.date_input(
+        "조회할 기간",
+        value=(default_start, default_end),
+        max_value=datetime.now().date(),
+    )
+    if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
+        search_start_date, search_end_date = date_range
+    else:
+        st.sidebar.warning("시작일과 종료일을 모두 선택해주세요.")
 
 download_attachments = st.sidebar.checkbox("첨부파일(공고문/지침서) 다운로드", value=True)
 
@@ -737,6 +751,10 @@ with tab1:
     log_box = st.expander("실행 로그", expanded=run_clicked)
 
     if run_clicked:
+        if period_mode == "특정 기간 검색" and (search_start_date is None or search_end_date is None):
+            st.error("먼저 사이드바에서 조회할 시작일과 종료일을 모두 선택해주세요.")
+            st.stop()
+
         st.session_state.log_lines = []
         log_area = log_box.empty()
 
@@ -752,6 +770,8 @@ with tab1:
                 days_back=days_back,
                 download_attachments=download_attachments,
                 progress_cb=progress_cb,
+                start_date=search_start_date,
+                end_date=search_end_date,
             )
         st.session_state.last_result = result
 
