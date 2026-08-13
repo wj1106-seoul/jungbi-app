@@ -911,7 +911,7 @@ with tab2:
                 hist_log_lines.append(msg)
                 hist_log_area.code("\n".join(hist_log_lines[-300:]))
 
-            with st.spinner(f"'{institution_keyword}' 관련 공고를 최근 {years_back}년치 뒤지는 중입니다... 시간이 걸릴 수 있어요."):
+            with st.spinner(f"'{institution_keyword}' 관련 공고를 최근 {years_back}년치 검색 중입니다... 시간이 걸릴 수 있어요."):
                 hist_result = core.search_by_institution(
                     institution_keyword,
                     service_key=service_key,
