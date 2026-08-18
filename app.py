@@ -804,9 +804,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📅 오늘의 공고 수집", "🏢 조합별 이력 조회", "🏘️ 실거래가 조사", "📊 월간 분석 보고서",
-])
+tab_labels = ["📅 오늘의 공고 수집", "🏢 조합별 이력 조회", "🏘️ 실거래가 조사"]
+if is_admin:
+    tab_labels.append("📊 월간 분석 보고서")
+
+_tabs = st.tabs(tab_labels)
+tab1, tab2, tab3 = _tabs[0], _tabs[1], _tabs[2]
+tab4 = _tabs[3] if is_admin else None
 
 with tab1:
     col_run, col_status = st.columns([1, 4])
@@ -1272,12 +1276,9 @@ with tab3:
         else:
             st.caption("시·도 → 시·군·구 → 기간을 선택한 뒤 조회 버튼을 눌러주세요.")
 
-with tab4:
-    st.subheader("📊 부동산 실거래가 분석 보고서 (관리자 전용)")
-
-    if not is_admin:
-        st.info("이 기능은 관리자 로그인 시에만 사용할 수 있습니다.")
-    else:
+if is_admin:
+    with tab4:
+        st.subheader("📊 부동산 실거래가 분석 보고서 (관리자 전용)")
         st.caption(
             "실거래가 원본 데이터가 담긴 '원본데이터' 시트를 포함한 엑셀을 업로드하면, "
             "동별·용도별 요약, 업무 지번별 분기추이, 근린생활 면적구간 분석, 층효과 비교 4개 "
