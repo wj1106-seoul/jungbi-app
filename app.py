@@ -565,14 +565,14 @@ def render_file_preview(path: Path):
         if suffix == ".pdf":
             data = path.read_bytes()
             b64 = base64.b64encode(data).decode("utf-8")
-            st.markdown(
+            pdf_html = (
                 '<div style="border:1px solid #E5E5E5; border-radius:8px; overflow:hidden; '
-                'box-shadow:0 1px 4px rgba(0,0,0,0.06);">'
-                f'<iframe src="data:application/pdf;base64,{b64}" '
-                'width="100%" height="700" style="border:none; display:block;"></iframe>'
-                "</div>",
-                unsafe_allow_html=True,
+                'box-shadow:0 1px 4px rgba(0,0,0,0.06); height:700px;">'
+                f'<embed src="data:application/pdf;base64,{b64}" '
+                'type="application/pdf" width="100%" height="700" style="border:none; display:block;" />'
+                "</div>"
             )
+            components.html(pdf_html, height=710, scrolling=True)
         elif suffix in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
             st.image(str(path), use_container_width=True)
         elif suffix == ".hwp":
