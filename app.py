@@ -565,13 +565,51 @@ def render_file_preview(path: Path):
         if suffix == ".pdf":
             data = path.read_bytes()
             b64 = base64.b64encode(data).decode("utf-8")
-            pdf_html = (
-                '<div style="border:1px solid #E5E5E5; border-radius:8px; overflow:hidden; '
-                'box-shadow:0 1px 4px rgba(0,0,0,0.06); height:700px;">'
-                f'<embed src="data:application/pdf;base64,{b64}" '
-                'type="application/pdf" width="100%" height="700" style="border:none; display:block;" />'
-                "</div>"
-            )
+            pdf_html = f"""
+            <div id="pdf-container" style="border:1px solid #E5E5E5; border-radius:8px;
+                box-shadow:0 1px 4px rgba(0,0,0,0.06); height:700px; overflow-y:auto;
+                background:#F5F5F5; padding:8px; text-align:center;">
+              <div id="pdf-status" style="color:#888; padding:20px;">PDF를 불러오는 중...</div>
+            </div>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+            <script>
+              pdfjsLib.GlobalWorkerOptions.workerSrc =
+                'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+              const base64Data = "{b64}";
+              const raw = atob(base64Data);
+              const bytes = new Uint8Array(raw.length);
+              for (let i = 0; i < raw.length; i++) {{ bytes[i] = raw.charCodeAt(i); }}
+
+              const container = document.getElementById('pdf-container');
+              const statusEl = document.getElementById('pdf-status');
+
+              pdfjsLib.getDocument({{ data: bytes }}).promise.then(function(pdf) {{
+                statusEl.remove();
+                let renderNext = function(pageNum) {{
+                  if (pageNum > pdf.numPages) return;
+                  pdf.getPage(pageNum).then(function(page) {{
+                    const scale = 1.3;
+                    const viewport = page.getViewport({{ scale: scale }});
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+                    canvas.style.display = 'block';
+                    canvas.style.margin = '0 auto 10px auto';
+                    canvas.style.boxShadow = '0 1px 3px rgba(0,0,0,0.15)';
+                    container.appendChild(canvas);
+                    const ctx = canvas.getContext('2d');
+                    page.render({{ canvasContext: ctx, viewport: viewport }}).promise.then(function() {{
+                      renderNext(pageNum + 1);
+                    }});
+                  }});
+                }};
+                renderNext(1);
+              }}).catch(function(err) {{
+                statusEl.innerText = 'PDF 미리보기를 표시할 수 없습니다: ' + err.message;
+              }});
+            </script>
+            """
             components.html(pdf_html, height=710, scrolling=True)
         elif suffix in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"):
             st.image(str(path), use_container_width=True)
