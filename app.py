@@ -474,7 +474,17 @@ def _parse_hwpx_blocks(path: Path):
                     continue
                 cell_texts: list = []
                 _collect_text_in(tc, cell_texts)
-                row_cells.append(" ".join(cell_texts).strip())
+                colspan, rowspan = 1, 1
+                for attr_elem in tc:
+                    if _local_tag(attr_elem.tag) == "cellSpan":
+                        colspan = int(attr_elem.get("colSpan", 1))
+                        rowspan = int(attr_elem.get("rowSpan", 1))
+                        break
+                row_cells.append({
+                    "text": " ".join(cell_texts).strip(),
+                    "colspan": max(colspan, 1),
+                    "rowspan": max(rowspan, 1),
+                })
             if row_cells:
                 rows.append(row_cells)
         return rows
@@ -544,13 +554,14 @@ def _render_document_blocks(blocks):
             rows_html = []
             for row in content:
                 cells_html = "".join(
-                    f'<td style="border:1px solid #999999; padding:6px 10px; '
-                    f'font-size:13.5px; text-align:left;">{_esc(c).strip()}</td>'
-                    for c in row
+                    f'<td colspan="{cell["colspan"]}" rowspan="{cell["rowspan"]}" '
+                    f'style="border:1px solid #999999; padding:6px 10px; '
+                    f'font-size:13.5px; text-align:left; vertical-align:top;">{_esc(cell["text"])}</td>'
+                    for cell in row
                 )
                 rows_html.append(f"<tr>{cells_html}</tr>")
             table_html = (
-                '<table style="border-collapse:collapse; margin:6px 0 20px 0; width:100%;">'
+                '<table style="border-collapse:collapse; margin:6px 0 20px 0; width:100%; table-layout:auto;">'
                 + "".join(rows_html)
                 + "</table>"
             )
