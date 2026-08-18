@@ -522,34 +522,35 @@ def _parse_hwpx_blocks(path: Path):
 
 
 def _render_document_blocks(blocks):
-    """문단/표 블록 리스트를 문서처럼 보이는 카드 스타일로 렌더링."""
+    """문단/표 블록 리스트를 원본 문서에 가깝게, 꾸밈없이 렌더링."""
     if not blocks:
         st.info("추출된 내용이 없습니다. 다운로드하여 확인해주세요.")
         return
 
+    def _esc(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
     parts = [
         '<div style="background:#FFFFFF; border:1px solid #E5E5E5; border-radius:8px; '
-        'padding:28px 32px; max-height:600px; overflow-y:auto; '
+        'padding:28px 32px; max-height:650px; overflow-y:auto; '
         'font-family:\'Malgun Gothic\',\'맑은 고딕\',sans-serif; font-size:14.5px; '
-        'line-height:1.75; color:#222222;">'
+        'line-height:1.8; color:#222222;">'
     ]
     for kind, content in blocks:
         if kind == "text":
-            safe = (
-                content.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            )
-            parts.append(f'<p style="margin:0 0 12px 0;">{safe}</p>')
+            safe = _esc(content)
+            parts.append(f'<p style="margin:0 0 14px 0;">{safe}</p>')
         elif kind == "table":
             rows_html = []
             for row in content:
                 cells_html = "".join(
-                    f'<td style="border:1px solid #CCCCCC; padding:6px 10px; '
-                    f'font-size:13.5px;">{c.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")}</td>'
+                    f'<td style="border:1px solid #999999; padding:6px 10px; '
+                    f'font-size:13.5px; text-align:left;">{_esc(c).strip()}</td>'
                     for c in row
                 )
                 rows_html.append(f"<tr>{cells_html}</tr>")
             table_html = (
-                '<table style="border-collapse:collapse; margin:8px 0 18px 0; width:100%;">'
+                '<table style="border-collapse:collapse; margin:6px 0 20px 0; width:100%;">'
                 + "".join(rows_html)
                 + "</table>"
             )
