@@ -15,7 +15,7 @@ import zipfile
 import tempfile
 import re
 import xml.etree.ElementTree as ET
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import streamlit as st
@@ -1072,7 +1072,7 @@ with tab3:
             "아파트처럼 단지명이 없고, 건물유형/건물주용도로 구분됩니다."
         )
 
-        cm_col1, cm_col2, cm_col3, cm_col4 = st.columns([1.2, 1.5, 1, 0.8])
+        cm_col1, cm_col2 = st.columns([1.2, 1.5])
         with cm_col1:
             cm_sido = st.selectbox(
                 "시·도", list(re_core.REGION_CODES.keys()),
@@ -1082,10 +1082,27 @@ with tab3:
             cm_sigungu_options = list(re_core.REGION_CODES.get(cm_sido, {}).keys())
             cm_default_idx = cm_sigungu_options.index("강남구") if "강남구" in cm_sigungu_options else 0
             cm_sigungu = st.selectbox("시·군·구", cm_sigungu_options, index=cm_default_idx, key="cm_sigungu")
+
+        cm_col3, cm_col4 = st.columns([1.5, 1])
         with cm_col3:
-            cm_months = st.selectbox("조회기간(개월)", [1, 3, 6, 12, 24, 36, 60], index=3, key="cm_months")
+            cm_date_range = st.date_input(
+                "조회 기간",
+                value=(datetime.now().date() - timedelta(days=90), datetime.now().date()),
+                max_value=datetime.now().date(),
+                key="cm_date_range",
+            )
         with cm_col4:
-            cm_dong = st.text_input("동 검색(선택)", key="cm_dong", placeholder="예: 역삼동")
+            cm_dong = st.text_input("동 검색(선택, 콤마로 여러 개)", key="cm_dong", placeholder="예: 역삼동, 삼성동")
+
+        cm_use_all = st.checkbox("용도 필터 없이 상업·업무용 전체 조회", value=False, key="cm_use_all")
+        if cm_use_all:
+            cm_use_filter = None
+        else:
+            cm_use_keywords = st.text_input(
+                "건물주용도 필터(콤마로 구분, 부분일치)", value=", ".join(re_core.DEFAULT_USE_FILTER),
+                key="cm_use_keywords",
+            )
+            cm_use_filter = [u.strip() for u in cm_use_keywords.split(",") if u.strip()] or None
 
         cm_run = st.button("🔍 실거래가 조회", type="primary", key="cm_run_btn")
 
@@ -1099,7 +1116,10 @@ with tab3:
                 st.error("인증키가 없어 조회할 수 없습니다.")
             elif not cm_lawd_cd:
                 st.error("시·도/시·군·구를 다시 선택해주세요.")
+            elif not isinstance(cm_date_range, (tuple, list)) or len(cm_date_range) != 2:
+                st.error("조회 기간의 시작일과 종료일을 모두 선택해주세요.")
             else:
+                cm_start_date, cm_end_date = cm_date_range
                 cm_status = st.empty()
 
                 def _cm_progress(msg):
@@ -1108,7 +1128,8 @@ with tab3:
                 try:
                     with st.spinner("상업·업무용 실거래가 조회 중..."):
                         df_cm = re_core.fetch_commercial_transactions(
-                            molit_key, cm_lawd_cd, cm_months, cm_dong, progress_cb=_cm_progress
+                            molit_key, cm_lawd_cd, cm_start_date, cm_end_date,
+                            dong_filter=cm_dong, use_filter=cm_use_filter, progress_cb=_cm_progress,
                         )
                     cm_status.empty()
                     if df_cm.empty:
@@ -1117,9 +1138,13 @@ with tab3:
                     else:
                         st.session_state.cm_df = df_cm
                         st.session_state.cm_meta = {
-                            "sido": cm_sido, "sigungu": cm_sigungu, "dong": cm_dong, "months": cm_months,
+                            "sido": cm_sido, "sigungu": cm_sigungu, "dong": cm_dong,
+                            "start_date": cm_start_date, "end_date": cm_end_date, "use_filter": cm_use_filter,
                         }
                         st.success(f"{len(df_cm):,}건 조회 완료")
+                except re_core.ServiceKeyError as e:
+                    cm_status.empty()
+                    st.error(f"인증키 문제로 조회할 수 없습니다: {e}")
                 except Exception as e:
                     cm_status.empty()
                     st.error(f"조회 중 오류가 발생했습니다: {e}")
@@ -1153,7 +1178,8 @@ with tab3:
             try:
                 cm_excel_bytes = re_core.build_commercial_excel_bytes(
                     df_cm_display, cm_meta.get("sido", ""), cm_meta.get("sigungu", ""),
-                    cm_meta.get("dong", ""), cm_meta.get("months", ""),
+                    cm_meta.get("dong", ""), cm_meta.get("start_date"), cm_meta.get("end_date"),
+                    cm_meta.get("use_filter"),
                 )
                 cm_dong_part = f"_{cm_meta.get('dong')}" if cm_meta.get("dong") else ""
                 cm_file_name = f"{cm_meta.get('sido')}_{cm_meta.get('sigungu')}{cm_dong_part}_상업업무용_실거래가.xlsx"

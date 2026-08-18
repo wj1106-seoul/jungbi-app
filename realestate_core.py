@@ -9,7 +9,7 @@ app.py에서 이 모듈의 다음 함수/값을 가져다 씁니다.
     build_excel_bytes(df, sido, sigungu, dong, months) -> bytes
 """
 import io
-from datetime import datetime
+from datetime import datetime, date
 from typing import Callable, Optional
 
 import requests
@@ -19,6 +19,33 @@ from dateutil.relativedelta import relativedelta
 
 from openpyxl import load_workbook
 from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+
+
+class ServiceKeyError(Exception):
+    """인증키 문제(미등록/미승인/오류)로 API 호출이 거부되었을 때 발생."""
+    pass
+
+
+_SERVICE_KEY_ERROR_MARKERS = [
+    "SERVICE_ACCESS_DENIED_ERROR", "SERVICE_KEY_IS_NOT_REGISTERED_ERROR",
+    "INVALID_REQUEST_PARAMETER_ERROR", "NO_OPENAPI_SERVICE_ERROR",
+    "등록되지 않은 서비스키", "활용신청",
+]
+
+
+def parse_date(value: str) -> date:
+    """'YYYY-MM-DD' 형태의 문자열을 date로 변환. 그 외 형식이면 ValueError."""
+    value = (value or "").strip()
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y%m%d"):
+        try:
+            return datetime.strptime(value, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f"날짜 형식을 알 수 없습니다: {value!r} (예: 2026-01-31)")
+
+
+# 상업·업무용 조회 시 기본으로 적용하는 건물주용도 필터 (부분일치)
+DEFAULT_USE_FILTER = ["근린생활", "업무"]
 
 ProgressCB = Optional[Callable[[str], None]]
 
@@ -152,7 +179,10 @@ def _get_month_data(service_key: str, lawd_cd: str, deal_ymd: str, operation: st
         result_code = header.findtext("resultCode", "")
         if result_code not in ("00", "000"):
             result_msg = header.findtext("resultMsg", "알 수 없는 오류")
-            raise RuntimeError(f"API 오류: {result_msg} (코드 {result_code})")
+            combined = f"{result_msg} (코드 {result_code})"
+            if any(marker in (result_msg or "") or marker in (result_code or "") for marker in _SERVICE_KEY_ERROR_MARKERS):
+                raise ServiceKeyError(combined)
+            raise RuntimeError(f"API 오류: {combined}")
 
     return xml_root.findall(".//item")
 
@@ -466,24 +496,38 @@ def build_excel_bytes(df: pd.DataFrame, sido: str, sigungu: str, dong: str, mont
 # 아파트와 API/필드가 완전히 다릅니다 - 단지명이 없고, 건물유형/건물주용도/건물면적/대지면적으로 식별합니다.
 # =========================================================
 
+def _month_buckets(start_date: date, end_date: date) -> list:
+    """start_date~end_date 사이에 걸치는 연월(YYYYMM) 목록을 오래된 순으로 반환."""
+    buckets = []
+    cur = date(start_date.year, start_date.month, 1)
+    end_marker = date(end_date.year, end_date.month, 1)
+    while cur <= end_marker:
+        buckets.append(cur.strftime("%Y%m"))
+        cur = date(cur.year + 1, 1, 1) if cur.month == 12 else date(cur.year, cur.month + 1, 1)
+    return buckets
+
+
 def fetch_commercial_transactions(
     service_key: str,
     lawd_cd: str,
-    months: int,
+    start_date: date,
+    end_date: date,
     dong_filter: str = "",
+    use_filter: Optional[list] = None,
     progress_cb: ProgressCB = None,
 ) -> pd.DataFrame:
-    """지정 지역의 최근 N개월 상업·업무용 부동산 매매 실거래가를 조회해 DataFrame으로 반환."""
+    """지정 지역·기간의 상업·업무용 부동산 매매 실거래가를 조회해 DataFrame으로 반환.
+
+    dong_filter: 콤마로 여러 법정동 지정 가능 (부분일치, 하나라도 맞으면 포함)
+    use_filter: 건물주용도 부분일치 키워드 리스트. None이면 전체(필터 없음).
+    """
     if not service_key:
         raise RuntimeError("실거래가 API 인증키(SERVICE_KEY)가 설정되지 않았습니다.")
 
-    all_data = []
-    today = datetime.today()
-    dong_filter = (dong_filter or "").strip()
+    dong_keywords = [d.strip() for d in (dong_filter or "").split(",") if d.strip()]
 
-    for i in range(months):
-        target_date = today - relativedelta(months=i)
-        deal_ymd = target_date.strftime("%Y%m")
+    all_data = []
+    for deal_ymd in _month_buckets(start_date, end_date):
         if progress_cb:
             progress_cb(f"{deal_ymd} 상업·업무용 실거래가 조회 중...")
 
@@ -494,19 +538,29 @@ def fetch_commercial_transactions(
 
         for item in items:
             dong_name = (item.findtext("umdNm", "") or "").strip()
-            if dong_filter and dong_filter not in dong_name:
+            if dong_keywords and not any(kw in dong_name for kw in dong_keywords):
+                continue
+
+            building_use = (item.findtext("buildingUse", "") or "").strip()
+            if use_filter and not any(kw in building_use for kw in use_filter):
+                continue
+
+            year = item.findtext("dealYear", "") or ""
+            month = item.findtext("dealMonth", "") or ""
+            day = item.findtext("dealDay", "") or ""
+            try:
+                contract_date = date(int(year), int(month), int(day))
+            except (TypeError, ValueError):
+                continue
+            if not (start_date <= contract_date <= end_date):
                 continue
 
             jibun = (item.findtext("jibun", "") or "").strip()
             building_type = (item.findtext("buildingType", "") or "").strip()
-            building_use = (item.findtext("buildingUse", "") or "").strip()
             floor = (item.findtext("floor", "") or "").strip()
             deal_amount = item.findtext("dealAmount", "0") or "0"
             building_ar = item.findtext("buildingAr", "0") or "0"
             plottage_ar = item.findtext("plottageAr", "0") or "0"
-            year = item.findtext("dealYear", "") or ""
-            month = item.findtext("dealMonth", "") or ""
-            day = item.findtext("dealDay", "") or ""
 
             try:
                 deal_amount_manwon = int(deal_amount.replace(",", "").strip())
@@ -528,17 +582,12 @@ def fetch_commercial_transactions(
             basis_py = basis_m2 / 3.3058 if basis_m2 else 0
             price_per_py = deal_amount_won / basis_py if basis_py > 0 else 0
 
-            try:
-                contract_date = f"{year}-{int(month):02d}-{int(day):02d}"
-            except (TypeError, ValueError):
-                contract_date = ""
-
             all_data.append({
                 "법정동": dong_name,
                 "지번": jibun,
                 "건물유형": building_type,
                 "건물주용도": building_use,
-                "계약일": contract_date,
+                "계약일": contract_date.isoformat(),
                 "거래금액(원)": deal_amount_won,
                 "건물면적(㎡)": round(building_ar_m2, 2),
                 "대지면적(㎡)": round(plottage_ar_m2, 2),
@@ -555,7 +604,10 @@ def fetch_commercial_transactions(
     return df
 
 
-def build_commercial_excel_bytes(df: pd.DataFrame, sido: str, sigungu: str, dong: str, months) -> bytes:
+def build_commercial_excel_bytes(
+    df: pd.DataFrame, sido: str, sigungu: str, dong: str,
+    start_date: date, end_date: date, use_filter: Optional[list] = None,
+) -> bytes:
     if df.empty:
         raise RuntimeError("내보낼 데이터가 없습니다. 먼저 조회를 실행해주세요.")
 
@@ -593,16 +645,18 @@ def build_commercial_excel_bytes(df: pd.DataFrame, sido: str, sigungu: str, dong
     location_text = f"{sido} {sigungu}"
     if dong:
         location_text += f" {dong}"
+    period_text = f"{start_date.isoformat()} ~ {end_date.isoformat()}"
+    use_text = ", ".join(use_filter) if use_filter else "전체"
 
     ws["A3"] = "조사지역"
     ws.merge_cells("B3:C3")
     ws["B3"] = location_text
     ws["D3"] = "조회기간"
     ws.merge_cells("E3:F3")
-    ws["E3"] = f"최근 {months}개월"
-    ws["G3"] = "조회일"
+    ws["E3"] = period_text
+    ws["G3"] = "대상 용도"
     ws.merge_cells("H3:K3")
-    ws["H3"] = datetime.today().strftime("%Y-%m-%d")
+    ws["H3"] = use_text
 
     for cell_name in ["A3", "D3", "G3"]:
         cell = ws[cell_name]
