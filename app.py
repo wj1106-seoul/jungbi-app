@@ -25,8 +25,7 @@ import altair as alt
 
 import collector_core as core
 import realestate_core as re_core
-import report_core
-import report_hwpx
+import report_realestate as rr_report
 
 st.set_page_config(page_title="정비사업 입찰공고 수집기", page_icon="🏗️", layout="wide")
 
@@ -1197,82 +1196,77 @@ with tab3:
             st.caption("시·도 → 시·군·구 → 기간을 선택한 뒤 조회 버튼을 눌러주세요.")
 
 with tab4:
-    st.subheader("📊 월간 분석 보고서 (관리자 전용)")
+    st.subheader("📊 부동산 실거래가 분석 보고서 (관리자 전용)")
 
     if not is_admin:
         st.info("이 기능은 관리자 로그인 시에만 사용할 수 있습니다.")
     else:
         st.caption(
-            "마스터 엑셀(응찰업체별 데이터가 담긴 '2026 정비사업 입찰공고 정리내역' 시트 포함)을 업로드하면, "
-            "집계시트 11개를 다시 계산하고 한글(HWPX) 분석 보고서를 자동으로 만들어드립니다. "
-            "마스터 원본 데이터와 수식은 그대로 보존됩니다."
+            "실거래가 원본 데이터가 담긴 '원본데이터' 시트를 포함한 엑셀을 업로드하면, "
+            "동별·용도별 요약, 업무 지번별 분기추이, 근린생활 면적구간 분석, 층효과 비교 4개 "
+            "집계시트를 다시 계산해드립니다. 원본데이터 시트는 그대로 보존됩니다."
         )
 
-        uploaded_master = st.file_uploader(
-            "마스터 엑셀 업로드 (.xlsx)", type=["xlsx"], key="report_master_upload"
+        uploaded_re = st.file_uploader(
+            "실거래가 분석 엑셀 업로드 (.xlsx, '원본데이터' 시트 포함)", type=["xlsx"], key="re_report_upload"
         )
 
-        if "report_excel_bytes" not in st.session_state:
-            st.session_state.report_excel_bytes = None
-            st.session_state.report_hwpx_bytes = None
+        area_threshold = st.number_input(
+            "업무시설 '표준면적' 기준 (이 값 미만만 지번별 분기추이에 포함, ㎡)",
+            min_value=10.0, max_value=200.0, value=50.0, step=5.0, key="re_report_area_threshold",
+        )
+
+        if "re_report_excel_bytes" not in st.session_state:
+            st.session_state.re_report_excel_bytes = None
 
         gen_clicked = st.button(
-            "🔄 보고서 생성", type="primary", key="report_gen_btn",
-            disabled=uploaded_master is None,
+            "🔄 보고서 생성", type="primary", key="re_report_gen_btn",
+            disabled=uploaded_re is None,
         )
 
-        if gen_clicked and uploaded_master is not None:
-            input_bytes = uploaded_master.read()
-            report_status = st.empty()
+        if gen_clicked and uploaded_re is not None:
+            input_bytes = uploaded_re.read()
+            re_report_status = st.empty()
 
-            def _report_progress(msg):
-                report_status.info(msg)
+            def _re_report_progress(msg):
+                re_report_status.info(msg)
 
             try:
-                with st.spinner("집계시트 재계산 및 보고서 생성 중... (데이터 양에 따라 시간이 걸릴 수 있어요)"):
-                    excel_bytes = report_core.refresh_excel_bytes(input_bytes, progress_cb=_report_progress)
-                    report_data = report_core.build_report_data(input_bytes)
-                    hwpx_bytes = report_hwpx.build_report_hwpx_bytes(report_data)
-                report_status.empty()
-                st.session_state.report_excel_bytes = excel_bytes
-                st.session_state.report_hwpx_bytes = hwpx_bytes
-                st.session_state.report_file_stem = Path(uploaded_master.name).stem
-                st.success(f"생성 완료! (공고 {report_data['총공고수']:,}건 · 사업장 {report_data['총사업장수']:,}개소)")
+                with st.spinner("집계시트 재계산 중..."):
+                    excel_bytes = rr_report.refresh_realestate_excel_bytes(
+                        input_bytes, area_threshold=area_threshold, progress_cb=_re_report_progress
+                    )
+                    df_preview = rr_report.build_master_df(input_bytes)
+                re_report_status.empty()
+                st.session_state.re_report_excel_bytes = excel_bytes
+                st.session_state.re_report_file_stem = Path(uploaded_re.name).stem
+                st.success(f"생성 완료! (거래 {len(df_preview):,}건)")
             except Exception as e:
-                report_status.empty()
+                re_report_status.empty()
                 st.error(f"보고서 생성 중 오류가 발생했습니다: {e}")
 
-        if st.session_state.get("report_excel_bytes"):
+        if st.session_state.get("re_report_excel_bytes"):
             st.divider()
-            stem = st.session_state.get("report_file_stem", "정비사업_정리내역")
-            dl_col1, dl_col2 = st.columns(2)
-            with dl_col1:
-                st.download_button(
-                    "⬇️ 갱신된 엑셀 다운로드",
-                    data=st.session_state.report_excel_bytes,
-                    file_name=f"{stem}_갱신.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary",
-                    key="report_excel_dl",
-                )
-            with dl_col2:
-                st.download_button(
-                    "⬇️ 한글 분석 보고서 다운로드",
-                    data=st.session_state.report_hwpx_bytes,
-                    file_name=f"{stem}_분석보고서.hwpx",
-                    mime="application/octet-stream",
-                    type="primary",
-                    key="report_hwpx_dl",
-                )
+            stem = st.session_state.get("re_report_file_stem", "실거래가_분석")
+            st.download_button(
+                "⬇️ 갱신된 엑셀 다운로드",
+                data=st.session_state.re_report_excel_bytes,
+                file_name=f"{stem}_갱신.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                key="re_report_excel_dl",
+            )
 
         with st.expander("ℹ️ 알려진 한계 (참고)"):
             st.markdown(
-                "- **파이프라인① 사업장 진행단계**: 친환경/CM/구조 등 드문 카테고리 단독 사업장의 경계 판정이 "
-                "원본 수기 스냅샷과 완전히 일치하지 않을 수 있습니다 (전체 대비 약 2% 수준의 차이).\n"
-                "- **업체네트워크 '전문분야별 클러스터'**: 편집자 판단이 들어가는 분류라 자동화 대상에서 제외했습니다. "
-                "응찰 상위 업체·동시등장 상위 쌍은 자동 계산됩니다.\n"
-                "- **한글 보고서의 해석 문장**: 계산된 순위/수치를 템플릿에 자동으로 대입하는 방식입니다. "
-                "특정 조합명을 짚어 설명하는 깊은 해석까지는 자동화되어 있지 않아, 생성 후 한 번 검토를 권장합니다."
+                "- **층효과_비교의 '업무' 상관계수** 1개 값만 예시 파일과 정확히 재현되지 않았습니다. "
+                "표본이 적을 때 이상치 하나로도 상관계수가 크게 흔들리는 값이라, 다른 핵심 집계표(동별 요약, "
+                "면적구간분석, 지번별 분기추이 등)보다 중요도가 낮다고 보고 우선 진행했습니다.\n"
+                "- **업무 층 구간**은 5~10층/11~15층/16~20층만 집계합니다(1~4층·21층 이상은 표본이 매우 "
+                "적어 제외). 필요하시면 구간을 조정해드릴 수 있어요.\n"
+                "- 이 자동화는 실거래가 조회 탭에서 받은 데이터를 '원본데이터' 시트 형태(법정동/지번/건물유형/"
+                "건물주용도/계약일/거래금액(원)/건물면적(㎡)/대지면적(㎡)/평당가(원)/층/비고 컬럼)로 정리한 "
+                "파일을 전제로 합니다."
             )
 
 st.divider()
