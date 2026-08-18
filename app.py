@@ -382,6 +382,9 @@ if "log_lines" not in st.session_state:
     st.session_state.log_lines = []
 if "last_result" not in st.session_state:
     st.session_state.last_result = None
+    st.session_state.last_period_mode = None
+    st.session_state.last_search_start_date = None
+    st.session_state.last_search_end_date = None
 
 
 def push_log(msg: str):
@@ -738,6 +741,16 @@ elif period_mode == "특정 기간 검색":
     )
     if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
         search_start_date, search_end_date = date_range
+        n_days = (search_end_date - search_start_date).days + 1
+        est_calls = core.estimate_institution_search_calls(n_days / 365, ["용역"])
+        est_minutes = max(1, round(est_calls * 1.5 / 60))
+        if est_calls > 60:
+            st.sidebar.warning(
+                f"⚠️ {n_days}일치 조회 시 API를 약 {est_calls}회 호출합니다 "
+                f"(대략 {est_minutes}분 이상 걸릴 수 있어요). 기간을 좁히는 걸 추천드려요."
+            )
+        else:
+            st.sidebar.caption(f"예상 API 호출 {est_calls}회 (약 {est_minutes}분 이내)")
     else:
         st.sidebar.warning("시작일과 종료일을 모두 선택해주세요.")
 
@@ -827,6 +840,9 @@ with tab1:
                 end_date=search_end_date,
             )
         st.session_state.last_result = result
+        st.session_state.last_period_mode = period_mode
+        st.session_state.last_search_start_date = search_start_date
+        st.session_state.last_search_end_date = search_end_date
 
     result = st.session_state.last_result
 
@@ -836,7 +852,18 @@ with tab1:
         status_placeholder.warning(result.message)
     else:
         m1, m2, m3 = st.columns(3)
-        m1.metric("기준일", f"{result.title_date:%Y-%m-%d}")
+        if (
+            st.session_state.get("last_period_mode") == "특정 기간 검색"
+            and st.session_state.get("last_search_start_date")
+            and st.session_state.get("last_search_end_date")
+        ):
+            period_label = (
+                f"{st.session_state.last_search_start_date:%Y-%m-%d} ~ "
+                f"{st.session_state.last_search_end_date:%Y-%m-%d}"
+            )
+            m1.metric("조회 기간", period_label)
+        else:
+            m1.metric("기준일", f"{result.title_date:%Y-%m-%d}")
         m2.metric("API 조회 건수", f"{result.raw_count:,}건")
         m3.metric("필터 통과 건수", f"{len(result.filtered_df):,}건")
 
