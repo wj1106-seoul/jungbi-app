@@ -731,6 +731,7 @@ if not service_key:
         "로컬 실행: .env 파일 확인 / Streamlit Cloud: Secrets 설정 확인"
     )
 
+st.sidebar.caption("⬇️ 아래 '조회 기간'과 '첨부파일 다운로드'는 **📅 오늘의 공고 수집** 탭에만 적용됩니다.")
 period_mode = st.sidebar.radio("조회 기간", ["직전 영업일만", "최근 N일", "특정 기간 검색"], index=0)
 yesterday_only = period_mode == "직전 영업일만"
 days_back = 1
@@ -761,7 +762,7 @@ elif period_mode == "특정 기간 검색":
     else:
         st.sidebar.warning("시작일과 종료일을 모두 선택해주세요.")
 
-download_attachments = st.sidebar.checkbox("첨부파일(공고문/지침서) 다운로드", value=True)
+download_attachments = st.sidebar.checkbox("첨부파일(공고문/지침서) 다운로드 (오늘의 공고 수집 탭용)", value=True)
 
 if is_admin:
     st.sidebar.divider()
@@ -982,7 +983,7 @@ with tab2:
             "업무구분", ["용역", "공사", "물품", "기타"], default=["용역"],
         )
 
-    hist_download_attachments = st.checkbox("첨부파일(공고문/지침서) 다운로드", value=True, key="hist_dl_att")
+    hist_download_attachments = st.checkbox("첨부파일(공고문/지침서) 다운로드 (이 탭 전용, 사이드바와 별개)", value=True, key="hist_dl_att")
 
     est_calls = core.estimate_institution_search_calls(years_back, hist_biz_types or ["용역"])
     st.caption(
