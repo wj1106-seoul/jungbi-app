@@ -9,6 +9,7 @@ app.py에서 이 모듈의 다음 함수/값을 가져다 씁니다.
     build_excel_bytes(df, sido, sigungu, dong, months) -> bytes
 """
 import io
+import time
 from datetime import datetime, date
 from typing import Callable, Optional
 
@@ -160,7 +161,11 @@ REGION_CODES = {
 # 국토부 API 조회
 # =========================================================
 
-def _get_month_data(service_key: str, lawd_cd: str, deal_ymd: str, operation: str = "getRTMSDataSvcAptTrade", service_id: str = "RTMSDataSvcAptTrade"):
+RETRY_ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 3
+
+
+def _get_month_data(service_key: str, lawd_cd: str, deal_ymd: str, operation: str = "getRTMSDataSvcAptTrade", service_id: str = "RTMSDataSvcAptTrade", progress_cb: ProgressCB = None):
     url = (
         f"https://apis.data.go.kr/1613000/{service_id}/{operation}"
         f"?serviceKey={service_key}"
@@ -169,7 +174,24 @@ def _get_month_data(service_key: str, lawd_cd: str, deal_ymd: str, operation: st
         "&numOfRows=9999"
         "&pageNo=1"
     )
-    response = requests.get(url, timeout=30)
+
+    last_conn_error = None
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            response = requests.get(url, timeout=30)
+            break
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            last_conn_error = e
+            if attempt < RETRY_ATTEMPTS:
+                if progress_cb:
+                    progress_cb(f"  연결이 지연되고 있어 재시도합니다... ({attempt}/{RETRY_ATTEMPTS})")
+                time.sleep(RETRY_DELAY_SECONDS)
+            else:
+                raise RuntimeError(
+                    f"국토교통부 서버에 연결할 수 없습니다 ({RETRY_ATTEMPTS}번 재시도 실패). "
+                    f"서버가 일시적으로 불안정할 수 있어요. 잠시 후 다시 시도해주세요. (상세: {e})"
+                )
+
     if response.status_code != 200:
         raise RuntimeError(f"API 오류 (상태코드 {response.status_code})")
     xml_root = ET.fromstring(response.content)
@@ -208,7 +230,7 @@ def fetch_transactions(
         if progress_cb:
             progress_cb(f"{deal_ymd} 실거래가 조회 중...")
 
-        items = _get_month_data(service_key, lawd_cd, deal_ymd)
+        items = _get_month_data(service_key, lawd_cd, deal_ymd, progress_cb=progress_cb)
 
         for item in items:
             apt_name = (item.findtext("aptNm", "") or "").strip()
@@ -534,6 +556,7 @@ def fetch_commercial_transactions(
         items = _get_month_data(
             service_key, lawd_cd, deal_ymd,
             operation="getRTMSDataSvcNrgTrade", service_id="RTMSDataSvcNrgTrade",
+            progress_cb=progress_cb,
         )
 
         for item in items:
