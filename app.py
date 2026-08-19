@@ -904,7 +904,15 @@ with tab1:
             filtered_view = filtered_view[mask]
 
         st.caption(f"검색 결과: {len(filtered_view):,}건 / 전체 {len(df_display):,}건")
-        st.dataframe(filtered_view, use_container_width=True, height=480)
+        st.dataframe(
+            filtered_view,
+            use_container_width=True,
+            height=480,
+            column_config={
+                "입찰금액(원)": st.column_config.NumberColumn(format="%,d"),
+                "평단가(원)": st.column_config.NumberColumn(format="%,d"),
+            },
+        )
 
         with st.expander("📊 통계 보기", expanded=False):
             def horizontal_bar(series: pd.Series, label_name: str):
@@ -1171,7 +1179,15 @@ with tab2:
         else:
             df_hist_view = df_hist_display
 
-        st.dataframe(df_hist_view, use_container_width=True, height=480)
+        st.dataframe(
+            df_hist_view,
+            use_container_width=True,
+            height=480,
+            column_config={
+                "입찰금액(원)": st.column_config.NumberColumn(format="%,d"),
+                "평단가(원)": st.column_config.NumberColumn(format="%,d"),
+            },
+        )
 
         if hist_result.excel_path and os.path.exists(hist_result.excel_path):
             with open(hist_result.excel_path, "rb") as f:
@@ -1279,6 +1295,10 @@ with tab3:
                 df_re_display[["법정동", "단지명", "계약일", "거래금액(원)", "전용면적(㎡)", "전용면적(평)", "평당가(원)", "층"]],
                 use_container_width=True,
                 hide_index=True,
+                column_config={
+                    "거래금액(원)": st.column_config.NumberColumn(format="%,d"),
+                    "평당가(원)": st.column_config.NumberColumn(format="%,d"),
+                },
             )
 
             meta = st.session_state.re_meta
@@ -1408,6 +1428,10 @@ with tab3:
                 ]],
                 use_container_width=True,
                 hide_index=True,
+                column_config={
+                    "거래금액(원)": st.column_config.NumberColumn(format="%,d"),
+                    "평당가(원)": st.column_config.NumberColumn(format="%,d"),
+                },
             )
 
             cm_meta = st.session_state.cm_meta
