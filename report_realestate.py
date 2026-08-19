@@ -25,6 +25,7 @@ from datetime import datetime
 
 import openpyxl
 import pandas as pd
+import numpy as np
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
@@ -266,7 +267,7 @@ def _write_df(ws, row, df: pd.DataFrame, start_col=2, pct_cols=None, round_cols=
             cell.font = BODY_FONT
             if col_name in pct_cols:
                 cell.number_format = "0.0%"
-            elif isinstance(val, float):
+            elif isinstance(val, (int, float, np.integer, np.floating)) and not isinstance(val, bool):
                 cell.number_format = "#,##0"
         row += 1
     return row + 1
