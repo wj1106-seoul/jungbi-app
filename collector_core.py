@@ -280,6 +280,67 @@ def save_config(cfg: dict):
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
 
+# ============================ 조합별 이력조회 - 즐겨찾기/최근조회기록 ============================
+
+HISTORY_STORE_PATH = BASE_DIR / "hist_history.json"
+MAX_RECENT_SEARCHES = 15
+
+
+def _load_hist_store() -> dict:
+    if HISTORY_STORE_PATH.exists():
+        try:
+            with open(HISTORY_STORE_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            data = {}
+    else:
+        data = {}
+    data.setdefault("favorites", [])
+    data.setdefault("recent", [])
+    return data
+
+
+def _save_hist_store(data: dict):
+    with open(HISTORY_STORE_PATH, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def get_favorites() -> list:
+    return _load_hist_store()["favorites"]
+
+
+def add_favorite(name: str):
+    name = name.strip()
+    if not name:
+        return
+    data = _load_hist_store()
+    if name not in data["favorites"]:
+        data["favorites"].append(name)
+        _save_hist_store(data)
+
+
+def remove_favorite(name: str):
+    data = _load_hist_store()
+    if name in data["favorites"]:
+        data["favorites"].remove(name)
+        _save_hist_store(data)
+
+
+def get_recent_searches() -> list:
+    return _load_hist_store()["recent"]
+
+
+def add_recent_search(name: str):
+    name = name.strip()
+    if not name:
+        return
+    data = _load_hist_store()
+    recent = [r for r in data["recent"] if r != name]
+    recent.insert(0, name)
+    data["recent"] = recent[:MAX_RECENT_SEARCHES]
+    _save_hist_store(data)
+
+
 # ============================ API 호출 설정 ============================
 URL_PREFIX_CANDIDATES_DEFAULT = [
     "https://apis.data.go.kr/1230000/ao/PrvtBidNtceService",

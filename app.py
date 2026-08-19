@@ -970,25 +970,91 @@ with tab2:
         unsafe_allow_html=True,
     )
 
-    hist_col1, hist_col2, hist_col3 = st.columns([2, 1, 1])
-    with hist_col1:
-        institution_keyword = st.text_input(
-            "발주기관 이름(일부만 입력해도 됩니다)",
-            placeholder="예: 마포로5구역제2지구, OO신탁, OO조합 ...",
+    if "hist_batch_mode" not in st.session_state:
+        st.session_state.hist_batch_mode = False
+
+    # ---------------- 즐겨찾기 / 최근 조회 기록 ----------------
+    favorites = core.get_favorites()
+    recent_searches = core.get_recent_searches()
+
+    with st.expander("⭐ 즐겨찾기 / 🕘 최근 조회 기록", expanded=bool(favorites or recent_searches)):
+        fav_col, recent_col = st.columns(2)
+        with fav_col:
+            st.caption("⭐ 즐겨찾기 (클릭하면 검색창에 채워짐)")
+            if not favorites:
+                st.caption("아직 즐겨찾기가 없어요. 아래에서 추가해보세요.")
+            for fav in favorites:
+                fb1, fb2 = st.columns([5, 1])
+                if fb1.button(fav, key=f"fav_use_{fav}", use_container_width=True):
+                    if st.session_state.hist_batch_mode:
+                        st.session_state.hist_batch_textarea = fav
+                    else:
+                        st.session_state.hist_keyword_input = fav
+                    st.rerun()
+                if fb2.button("✕", key=f"fav_del_{fav}", help="즐겨찾기에서 삭제"):
+                    core.remove_favorite(fav)
+                    st.rerun()
+            new_fav = st.text_input("새 즐겨찾기 추가", key="new_fav_input", placeholder="발주기관 이름 입력 후 Enter")
+            if new_fav.strip():
+                core.add_favorite(new_fav.strip())
+                st.rerun()
+
+        with recent_col:
+            st.caption("🕘 최근 조회 기록 (클릭하면 검색창에 채워짐)")
+            if not recent_searches:
+                st.caption("아직 조회 기록이 없어요.")
+            for r in recent_searches:
+                if st.button(r, key=f"recent_use_{r}", use_container_width=True):
+                    if st.session_state.hist_batch_mode:
+                        st.session_state.hist_batch_textarea = r
+                    else:
+                        st.session_state.hist_keyword_input = r
+                    st.rerun()
+
+    st.session_state.hist_batch_mode = st.checkbox(
+        "📋 여러 발주기관 한 번에 조회 (일괄조회)", value=st.session_state.hist_batch_mode,
+    )
+
+    if not st.session_state.hist_batch_mode:
+        hist_col1, hist_col2, hist_col3 = st.columns([2, 1, 1])
+        with hist_col1:
+            institution_keyword = st.text_input(
+                "발주기관 이름(일부만 입력해도 됩니다)",
+                placeholder="예: 마포로5구역제2지구, OO신탁, OO조합 ...",
+                key="hist_keyword_input",
+            )
+        with hist_col2:
+            years_back = st.number_input("조회 기간(년)", min_value=0.1, max_value=5.0, value=1.0, step=0.5)
+        with hist_col3:
+            hist_biz_types = st.multiselect(
+                "업무구분", ["용역", "공사", "물품", "기타"], default=["용역"],
+            )
+        batch_keywords = [institution_keyword] if institution_keyword.strip() else []
+    else:
+        st.caption("한 줄에 발주기관 이름 하나씩 입력하세요. 순서대로 조회해서 결과를 하나로 합쳐드립니다.")
+        batch_text = st.text_area(
+            "발주기관 목록", height=120, key="hist_batch_textarea",
+            placeholder="은마아파트 재건축정비사업조합\nOO신탁\n신길뉴타운재정비촉진구역",
         )
-    with hist_col2:
-        years_back = st.number_input("조회 기간(년)", min_value=0.1, max_value=5.0, value=1.0, step=0.5)
-    with hist_col3:
-        hist_biz_types = st.multiselect(
-            "업무구분", ["용역", "공사", "물품", "기타"], default=["용역"],
-        )
+        batch_keywords = [l.strip() for l in batch_text.splitlines() if l.strip()]
+        hist_col2, hist_col3 = st.columns(2)
+        with hist_col2:
+            years_back = st.number_input("조회 기간(년)", min_value=0.1, max_value=5.0, value=1.0, step=0.5)
+        with hist_col3:
+            hist_biz_types = st.multiselect(
+                "업무구분", ["용역", "공사", "물품", "기타"], default=["용역"],
+            )
+        if batch_keywords:
+            st.caption(f"입력된 발주기관: {len(batch_keywords)}곳 — {', '.join(batch_keywords[:5])}" + (" ..." if len(batch_keywords) > 5 else ""))
 
     hist_download_attachments = st.checkbox("첨부파일(공고문/지침서) 다운로드 (이 탭 전용, 사이드바와 별개)", value=True, key="hist_dl_att")
 
-    est_calls = core.estimate_institution_search_calls(years_back, hist_biz_types or ["용역"])
+    est_calls_one = core.estimate_institution_search_calls(years_back, hist_biz_types or ["용역"])
+    est_calls_total = est_calls_one * max(1, len(batch_keywords))
     st.caption(
-        f"⏱️ 예상 API 호출 횟수: 약 {est_calls}회 — 기간이 길수록 오래 걸립니다 "
-        f"(1년 기준 대략 5~15분, 5년이면 수십 분 이상 걸릴 수 있어요)."
+        f"⏱️ 예상 API 호출 횟수: 약 {est_calls_total}회"
+        + (f" ({len(batch_keywords)}곳 × {est_calls_one}회)" if len(batch_keywords) > 1 else "")
+        + " — 기간이 길수록, 발주기관이 많을수록 오래 걸립니다."
     )
 
     hist_run = st.button("🔎 이력 조회하기", type="primary", use_container_width=True)
@@ -996,7 +1062,7 @@ with tab2:
     hist_log_box = st.expander("조회 로그", expanded=hist_run)
 
     if hist_run:
-        if not institution_keyword.strip():
+        if not batch_keywords:
             hist_status.warning("발주기관 이름(키워드)을 먼저 입력해주세요.")
         else:
             hist_log_lines = []
@@ -1006,17 +1072,66 @@ with tab2:
                 hist_log_lines.append(msg)
                 hist_log_area.code("\n".join(hist_log_lines[-300:]))
 
-            with st.spinner(f"'{institution_keyword}' 관련 공고를 최근 {years_back}년치 검색 중입니다... 시간이 걸릴 수 있어요."):
-                hist_result = core.search_by_institution(
-                    institution_keyword,
-                    service_key=service_key,
-                    cfg=st.session_state.cfg,
-                    years_back=years_back,
-                    biz_types=hist_biz_types or ["용역"],
-                    download_attachments=hist_download_attachments,
-                    progress_cb=hist_progress_cb,
-                )
-            st.session_state.hist_result = hist_result
+            all_dfs = []
+            combined_excel_path = None
+            combined_attachment_dirs = []
+            any_ok = False
+            messages = []
+            total_raw_count = 0
+            single_result = None
+
+            for kw in batch_keywords:
+                with st.spinner(f"'{kw}' 관련 공고를 최근 {years_back}년치 검색 중입니다... 시간이 걸릴 수 있어요."):
+                    one_result = core.search_by_institution(
+                        kw,
+                        service_key=service_key,
+                        cfg=st.session_state.cfg,
+                        years_back=years_back,
+                        biz_types=hist_biz_types or ["용역"],
+                        download_attachments=hist_download_attachments,
+                        progress_cb=hist_progress_cb,
+                    )
+                core.add_recent_search(kw)
+                total_raw_count += one_result.raw_count
+                if len(batch_keywords) == 1:
+                    single_result = one_result
+                if one_result.ok and not one_result.filtered_df.empty:
+                    any_ok = True
+                    all_dfs.append(one_result.filtered_df)
+                    if one_result.attachment_dir:
+                        combined_attachment_dirs.append(Path(one_result.attachment_dir))
+                    messages.append(f"'{kw}': {len(one_result.filtered_df)}건")
+                else:
+                    messages.append(f"'{kw}': {one_result.message}")
+
+            if len(batch_keywords) == 1:
+                # 발주기관 1곳만 조회한 경우: 원래 결과 객체를 그대로 사용 (raw_count 등 정확히 보존)
+                hist_combined_result = single_result
+            elif not any_ok:
+                hist_combined_result = type("R", (), {
+                    "ok": False, "message": " / ".join(messages), "raw_count": total_raw_count,
+                    "filtered_df": pd.DataFrame(), "excel_path": None, "attachment_dir": None,
+                })()
+            else:
+                combined_df = pd.concat(all_dfs, ignore_index=True) if len(all_dfs) > 1 else all_dfs[0]
+                combined_df = combined_df.reset_index(drop=True)
+                if "연번" in combined_df.columns:
+                    combined_df["연번"] = range(1, len(combined_df) + 1)
+
+                ts = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
+                combined_title = ", ".join(batch_keywords[:3]) + (" 등" if len(batch_keywords) > 3 else "")
+                combined_excel_path = core.OUTPUT_DIR / f"이력조회_일괄_{ts}.xlsx"
+                core._write_excel(combined_df, combined_excel_path, f"{combined_title} 이력조회")
+
+                hist_combined_result = type("R", (), {
+                    "ok": True, "message": " / ".join(messages),
+                    "raw_count": total_raw_count, "filtered_df": combined_df,
+                    "excel_path": str(combined_excel_path),
+                    "attachment_dir": str(combined_attachment_dirs[0]) if len(combined_attachment_dirs) == 1 else None,
+                    "attachment_dirs": combined_attachment_dirs,
+                })()
+
+            st.session_state.hist_result = hist_combined_result
 
     hist_result = st.session_state.get("hist_result")
 
@@ -1025,12 +1140,38 @@ with tab2:
     elif not hist_result.ok:
         hist_status.warning(hist_result.message)
     else:
+        is_batch_result = hasattr(hist_result, "attachment_dirs")
         hc1, hc2 = st.columns(2)
-        hc1.metric("API 조회 건수", f"{hist_result.raw_count:,}건")
+        if is_batch_result:
+            hc1.metric("조회한 발주기관 수", f"{len(batch_keywords):,}곳")
+        else:
+            hc1.metric("API 조회 건수", f"{hist_result.raw_count:,}건")
         hc2.metric("필터 통과 건수", f"{len(hist_result.filtered_df):,}건")
+        if is_batch_result:
+            st.caption(f"발주기관별 결과: {hist_result.message}")
 
         st.write("")
-        st.dataframe(hist_result.filtered_df, use_container_width=True, height=480)
+
+        # ---------------- 사업유형 필터 ----------------
+        df_hist_display = hist_result.filtered_df.copy()
+        if not df_hist_display.empty:
+            df_hist_display["_사업유형_필터용"] = (
+                df_hist_display["발주기관"].astype(str) + " " + df_hist_display["공고명"].astype(str)
+            ).map(core.extract_project_type)
+            type_options = ["전체"] + sorted(
+                [t for t in df_hist_display["_사업유형_필터용"].unique() if t]
+            )
+            hist_type_selected = st.selectbox("사업유형 필터", type_options, key="hist_type_filter")
+            if hist_type_selected != "전체":
+                df_hist_view = df_hist_display[df_hist_display["_사업유형_필터용"] == hist_type_selected]
+            else:
+                df_hist_view = df_hist_display
+            df_hist_view = df_hist_view.drop(columns=["_사업유형_필터용"])
+            st.caption(f"표시: {len(df_hist_view):,}건 / 전체 {len(df_hist_display):,}건")
+        else:
+            df_hist_view = df_hist_display
+
+        st.dataframe(df_hist_view, use_container_width=True, height=480)
 
         if hist_result.excel_path and os.path.exists(hist_result.excel_path):
             with open(hist_result.excel_path, "rb") as f:
@@ -1041,13 +1182,15 @@ with tab2:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 
-        if hist_result.attachment_dir:
-            hist_attach_dir = Path(hist_result.attachment_dir)
+        attachment_dirs_to_show = getattr(hist_result, "attachment_dirs", None) or (
+            [Path(hist_result.attachment_dir)] if hist_result.attachment_dir else []
+        )
+        for i, hist_attach_dir in enumerate(attachment_dirs_to_show):
             if hist_attach_dir.exists() and any(hist_attach_dir.iterdir()):
-                with st.expander("📎 공고문/지침서 다운로드 · 미리보기", expanded=False):
+                with st.expander(f"📎 공고문/지침서 다운로드 · 미리보기 ({hist_attach_dir.name})", expanded=False):
                     render_attachment_browser(
                         hist_attach_dir,
-                        key_prefix="hist",
+                        key_prefix=f"hist{i}",
                         zip_file_name="공고문_첨부파일.zip",
                     )
 
