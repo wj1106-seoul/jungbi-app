@@ -642,10 +642,10 @@ def render_file_preview(path: Path):
         st.warning(f"미리보기를 만들 수 없습니다: {e}")
 
 
-def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_file_name: str, allowed_folder_names: set = None):
+def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_file_name: str, ordered_folder_names: list = None):
     """첨부파일 zip 전체 다운로드 + 파일별 미리보기/개별 다운로드 UI를 렌더링.
-    allowed_folder_names를 넘기면, 그 이름에 해당하는 폴더만 보여줌
-    (화면에 검색/필터된 결과와 첨부파일 목록을 맞추기 위함)."""
+    ordered_folder_names를 넘기면, 그 순서(=화면 표의 연번 순서) 그대로 폴더를 보여줌
+    (원래는 폴더명 알파벳순으로 나와서 표 순서와 안 맞았던 문제를 해결)."""
     zip_base = str(BASE_DIR / "output" / f"{key_prefix}_첨부파일_zip")
     zip_path = shutil.make_archive(zip_base, "zip", root_dir=str(attachment_dir_path))
     with open(zip_path, "rb") as f:
@@ -663,12 +663,19 @@ def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_fi
     if "preview_target" not in st.session_state:
         st.session_state.preview_target = None
 
-    folders = sorted([f for f in attachment_dir_path.iterdir() if f.is_dir()])
-    if allowed_folder_names is not None:
-        folders = [f for f in folders if f.name in allowed_folder_names]
+    existing_folders = {f.name: f for f in attachment_dir_path.iterdir() if f.is_dir()}
+    if ordered_folder_names is not None:
+        seen = set()
+        folders = []
+        for name in ordered_folder_names:
+            if name in existing_folders and name not in seen:
+                folders.append(existing_folders[name])
+                seen.add(name)
         if not folders:
             st.caption("지금 검색/필터 결과에 해당하는 첨부파일이 없습니다. (검색어를 지우면 전체가 보일 수 있어요)")
             return
+    else:
+        folders = sorted(existing_folders.values())
     if not folders:
         st.caption("다운로드된 첨부파일이 없습니다.")
 
@@ -957,15 +964,15 @@ with tab1:
         attachment_dir_path = core.DEFAULT_ATTACHMENT_DIR
         if attachment_dir_path.exists() and any(attachment_dir_path.iterdir()):
             with st.expander("📎 공고문/지침서 다운로드 · 미리보기", expanded=False):
-                allowed_names = {
+                ordered_names = [
                     core.sanitize_filename(f"{row['발주기관']}_{row['공고명']}")
                     for _, row in filtered_view.iterrows()
-                }
+                ]
                 render_attachment_browser(
                     attachment_dir_path,
                     key_prefix="today",
                     zip_file_name="공고문_첨부파일.zip",
-                    allowed_folder_names=allowed_names,
+                    ordered_folder_names=ordered_names,
                 )
 
 with tab2:
@@ -1201,6 +1208,10 @@ with tab2:
         attachment_dirs_to_show = getattr(hist_result, "attachment_dirs", None) or (
             [Path(hist_result.attachment_dir)] if hist_result.attachment_dir else []
         )
+        hist_ordered_names = [
+            core.sanitize_filename(f"{row['발주기관']}_{row['공고명']}")
+            for _, row in df_hist_view.iterrows()
+        ] if not df_hist_view.empty else None
         for i, hist_attach_dir in enumerate(attachment_dirs_to_show):
             if hist_attach_dir.exists() and any(hist_attach_dir.iterdir()):
                 with st.expander(f"📎 공고문/지침서 다운로드 · 미리보기 ({hist_attach_dir.name})", expanded=False):
@@ -1208,6 +1219,7 @@ with tab2:
                         hist_attach_dir,
                         key_prefix=f"hist{i}",
                         zip_file_name="공고문_첨부파일.zip",
+                        ordered_folder_names=hist_ordered_names,
                     )
 
 with tab3:
