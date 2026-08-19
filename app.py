@@ -642,8 +642,10 @@ def render_file_preview(path: Path):
         st.warning(f"미리보기를 만들 수 없습니다: {e}")
 
 
-def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_file_name: str):
-    """첨부파일 zip 전체 다운로드 + 파일별 미리보기/개별 다운로드 UI를 렌더링."""
+def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_file_name: str, allowed_folder_names: set = None):
+    """첨부파일 zip 전체 다운로드 + 파일별 미리보기/개별 다운로드 UI를 렌더링.
+    allowed_folder_names를 넘기면, 그 이름에 해당하는 폴더만 보여줌
+    (화면에 검색/필터된 결과와 첨부파일 목록을 맞추기 위함)."""
     zip_base = str(BASE_DIR / "output" / f"{key_prefix}_첨부파일_zip")
     zip_path = shutil.make_archive(zip_base, "zip", root_dir=str(attachment_dir_path))
     with open(zip_path, "rb") as f:
@@ -662,6 +664,11 @@ def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_fi
         st.session_state.preview_target = None
 
     folders = sorted([f for f in attachment_dir_path.iterdir() if f.is_dir()])
+    if allowed_folder_names is not None:
+        folders = [f for f in folders if f.name in allowed_folder_names]
+        if not folders:
+            st.caption("지금 검색/필터 결과에 해당하는 첨부파일이 없습니다. (검색어를 지우면 전체가 보일 수 있어요)")
+            return
     if not folders:
         st.caption("다운로드된 첨부파일이 없습니다.")
 
@@ -941,10 +948,15 @@ with tab1:
         attachment_dir_path = core.DEFAULT_ATTACHMENT_DIR
         if attachment_dir_path.exists() and any(attachment_dir_path.iterdir()):
             with st.expander("📎 공고문/지침서 다운로드 · 미리보기", expanded=False):
+                allowed_names = {
+                    core.sanitize_filename(f"{row['발주기관']}_{row['공고명']}")
+                    for _, row in filtered_view.iterrows()
+                }
                 render_attachment_browser(
                     attachment_dir_path,
                     key_prefix="today",
                     zip_file_name="공고문_첨부파일.zip",
+                    allowed_folder_names=allowed_names,
                 )
 
 with tab2:

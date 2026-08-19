@@ -1227,6 +1227,8 @@ def run_pipeline(
         attachment_dir = DEFAULT_ATTACHMENT_DIR
         if download_attachments:
             logger.log(f"첨부파일(공고문/지침서) 다운로드를 시작합니다 ({len(df)}건)...")
+            if attachment_dir.exists():
+                shutil.rmtree(attachment_dir)  # 이전 실행분 폴더가 계속 쌓이는 것 방지
             attachment_dir.mkdir(parents=True, exist_ok=True)
             reclassified = 0
             for idx, row in df.iterrows():
