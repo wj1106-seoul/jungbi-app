@@ -655,7 +655,8 @@ def _escape_html(s) -> str:
 
 
 def render_notice_calendar(df: pd.DataFrame, key_prefix: str = "cal"):
-    """공고일시/마감일시/현장설명회일 3가지 날짜를 달력 형태로 보여줌."""
+    """공고일시/마감일시/현장설명회일 3가지 날짜를 달력 형태로 보여줌.
+    칸 안에는 개수만 표시하고(가독성), 날짜를 고르면 아래에 상세 목록이 나옴."""
     if df.empty:
         st.caption("표시할 일정이 없습니다.")
         return
@@ -670,7 +671,11 @@ def render_notice_calendar(df: pd.DataFrame, key_prefix: str = "cal"):
                 datetime.strptime(date_str, "%Y-%m-%d")
             except ValueError:
                 continue
-            events.setdefault(date_str, []).append((col, str(row.get("공고명", ""))))
+            events.setdefault(date_str, []).append({
+                "종류": col,
+                "공고명": str(row.get("공고명", "")),
+                "발주기관": str(row.get("발주기관", "")),
+            })
 
     if not events:
         st.caption("이 결과에는 공고일/마감일/현장설명회일 날짜 정보가 없습니다. (마감일·현장설명회일은 첨부파일을 다운로드해야 채워질 수 있어요)")
@@ -692,10 +697,7 @@ def render_notice_calendar(df: pd.DataFrame, key_prefix: str = "cal"):
     selected_label = st.selectbox("표시할 월", month_options, index=default_idx, key=f"{key_prefix}_month_select")
     sel_year, sel_month = months_range[month_options.index(selected_label)]
 
-    st.markdown(
-        " · ".join(f"{emoji} {label}" for emoji, _, label in CALENDAR_EVENT_TYPES.values()),
-        help="같은 날짜에 여러 건이 있으면 최대 4건까지만 표시하고 나머지는 '+N건 더'로 표시됩니다.",
-    )
+    st.caption(" · ".join(f"{emoji} {label}" for emoji, _, label in CALENDAR_EVENT_TYPES.values()) + " — 숫자는 건수, 날짜를 골라서 아래에서 자세히 보세요.")
 
     cal_gen = calendar.Calendar(firstweekday=6)  # 일요일 시작
     weeks = cal_gen.monthdayscalendar(sel_year, sel_month)
@@ -709,35 +711,59 @@ def render_notice_calendar(df: pd.DataFrame, key_prefix: str = "cal"):
     ) + "</tr>")
 
     today_str = datetime.now().strftime("%Y-%m-%d")
+    dates_with_events = []
     for week in weeks:
         parts.append("<tr>")
         for day in week:
             if day == 0:
-                parts.append('<td style="border:1px solid #F0F0F0; height:92px; background:#FAFAFA;"></td>')
+                parts.append('<td style="border:1px solid #F0F0F0; height:64px; background:#FAFAFA;"></td>')
                 continue
             date_str = f"{sel_year}-{sel_month:02d}-{day:02d}"
             day_events = events.get(date_str, [])
             is_today = date_str == today_str
             bg = "#FFF7E6" if is_today else "#FFFFFF"
-            cell_html = f'<div style="font-weight:600; font-size:12px; margin-bottom:3px;">{day}</div>'
-            for etype, label in day_events[:4]:
-                emoji, color, _ = CALENDAR_EVENT_TYPES[etype]
-                safe_label = _escape_html(label)
-                short_label = safe_label[:13] + ("…" if len(safe_label) > 13 else "")
-                cell_html += (
-                    f'<div style="font-size:10px; color:{color}; white-space:nowrap; '
-                    f'overflow:hidden; text-overflow:ellipsis;" title="{safe_label}">{emoji} {short_label}</div>'
-                )
-            if len(day_events) > 4:
-                cell_html += f'<div style="font-size:10px; color:#888;">+{len(day_events) - 4}건 더</div>'
+            cell_html = f'<div style="font-weight:600; font-size:12px; margin-bottom:4px;">{day}</div>'
+            if day_events:
+                dates_with_events.append(date_str)
+                counts = {}
+                for ev in day_events:
+                    counts[ev["종류"]] = counts.get(ev["종류"], 0) + 1
+                badge_html = ""
+                for etype, count in counts.items():
+                    emoji, color, _ = CALENDAR_EVENT_TYPES[etype]
+                    badge_html += (
+                        f'<span style="font-size:11px; color:{color}; font-weight:600; '
+                        f'margin-right:6px; white-space:nowrap;">{emoji}{count}</span>'
+                    )
+                cell_html += f'<div>{badge_html}</div>'
             parts.append(
-                f'<td style="border:1px solid #F0F0F0; height:92px; vertical-align:top; '
-                f'padding:4px; background:{bg};">{cell_html}</td>'
+                f'<td style="border:1px solid #F0F0F0; height:64px; vertical-align:top; '
+                f'padding:6px; background:{bg};">{cell_html}</td>'
             )
         parts.append("</tr>")
     parts.append("</table></div>")
     st.markdown("".join(parts), unsafe_allow_html=True)
 
+    if not dates_with_events:
+        return
+
+    st.write("")
+    default_detail_idx = len(dates_with_events) - 1
+    selected_date = st.selectbox(
+        "📋 날짜를 선택하면 상세 목록을 볼 수 있어요",
+        dates_with_events,
+        index=default_detail_idx,
+        key=f"{key_prefix}_detail_date_select",
+    )
+    detail_rows = []
+    for ev in events[selected_date]:
+        emoji, _, label = CALENDAR_EVENT_TYPES[ev["종류"]]
+        detail_rows.append({
+            "종류": f"{emoji} {label}",
+            "공고명": ev["공고명"],
+            "발주기관": ev["발주기관"],
+        })
+    st.dataframe(pd.DataFrame(detail_rows), use_container_width=True, hide_index=True)
 
 def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_file_name: str, ordered_folder_names: list = None):
     """첨부파일 zip 전체 다운로드 + 파일별 미리보기/개별 다운로드 UI를 렌더링.
