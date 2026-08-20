@@ -14,6 +14,7 @@ import subprocess
 import zipfile
 import tempfile
 import re
+import calendar
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -642,6 +643,102 @@ def render_file_preview(path: Path):
         st.warning(f"미리보기를 만들 수 없습니다: {e}")
 
 
+CALENDAR_EVENT_TYPES = {
+    "공고일시": ("📢", "#1F77B4", "공고일"),
+    "마감일시": ("⏰", "#D62728", "마감일"),
+    "현장설명회일": ("🏗️", "#2CA02C", "현장설명회"),
+}
+
+
+def _escape_html(s) -> str:
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def render_notice_calendar(df: pd.DataFrame, key_prefix: str = "cal"):
+    """공고일시/마감일시/현장설명회일 3가지 날짜를 달력 형태로 보여줌."""
+    if df.empty:
+        st.caption("표시할 일정이 없습니다.")
+        return
+
+    events = {}
+    for _, row in df.iterrows():
+        for col in CALENDAR_EVENT_TYPES:
+            date_str = str(row.get(col, "") or "").strip()
+            if not date_str or date_str.lower() == "none":
+                continue
+            try:
+                datetime.strptime(date_str, "%Y-%m-%d")
+            except ValueError:
+                continue
+            events.setdefault(date_str, []).append((col, str(row.get("공고명", ""))))
+
+    if not events:
+        st.caption("이 결과에는 공고일/마감일/현장설명회일 날짜 정보가 없습니다. (마감일·현장설명회일은 첨부파일을 다운로드해야 채워질 수 있어요)")
+        return
+
+    all_dates = sorted(events.keys())
+    min_dt = datetime.strptime(all_dates[0], "%Y-%m-%d")
+    max_dt = datetime.strptime(all_dates[-1], "%Y-%m-%d")
+
+    months_range = []
+    cur = min_dt.replace(day=1)
+    while (cur.year, cur.month) <= (max_dt.year, max_dt.month):
+        months_range.append((cur.year, cur.month))
+        cur = (cur.replace(year=cur.year + 1, month=1) if cur.month == 12
+               else cur.replace(month=cur.month + 1))
+
+    month_options = [f"{y}년 {m}월" for y, m in months_range]
+    default_idx = len(month_options) - 1
+    selected_label = st.selectbox("표시할 월", month_options, index=default_idx, key=f"{key_prefix}_month_select")
+    sel_year, sel_month = months_range[month_options.index(selected_label)]
+
+    st.markdown(
+        " · ".join(f"{emoji} {label}" for emoji, _, label in CALENDAR_EVENT_TYPES.values()),
+        help="같은 날짜에 여러 건이 있으면 최대 4건까지만 표시하고 나머지는 '+N건 더'로 표시됩니다.",
+    )
+
+    cal_gen = calendar.Calendar(firstweekday=6)  # 일요일 시작
+    weeks = cal_gen.monthdayscalendar(sel_year, sel_month)
+
+    weekday_labels = ["일", "월", "화", "수", "목", "금", "토"]
+    parts = ['<div style="font-family:\'Malgun Gothic\',\'맑은 고딕\',sans-serif;">']
+    parts.append('<table style="width:100%; border-collapse:collapse; table-layout:fixed;">')
+    parts.append("<tr>" + "".join(
+        f'<th style="padding:6px; background:#F0F2F5; border:1px solid #E0E0E0; font-size:12px; color:#555;">{d}</th>'
+        for d in weekday_labels
+    ) + "</tr>")
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    for week in weeks:
+        parts.append("<tr>")
+        for day in week:
+            if day == 0:
+                parts.append('<td style="border:1px solid #F0F0F0; height:92px; background:#FAFAFA;"></td>')
+                continue
+            date_str = f"{sel_year}-{sel_month:02d}-{day:02d}"
+            day_events = events.get(date_str, [])
+            is_today = date_str == today_str
+            bg = "#FFF7E6" if is_today else "#FFFFFF"
+            cell_html = f'<div style="font-weight:600; font-size:12px; margin-bottom:3px;">{day}</div>'
+            for etype, label in day_events[:4]:
+                emoji, color, _ = CALENDAR_EVENT_TYPES[etype]
+                safe_label = _escape_html(label)
+                short_label = safe_label[:13] + ("…" if len(safe_label) > 13 else "")
+                cell_html += (
+                    f'<div style="font-size:10px; color:{color}; white-space:nowrap; '
+                    f'overflow:hidden; text-overflow:ellipsis;" title="{safe_label}">{emoji} {short_label}</div>'
+                )
+            if len(day_events) > 4:
+                cell_html += f'<div style="font-size:10px; color:#888;">+{len(day_events) - 4}건 더</div>'
+            parts.append(
+                f'<td style="border:1px solid #F0F0F0; height:92px; vertical-align:top; '
+                f'padding:4px; background:{bg};">{cell_html}</td>'
+            )
+        parts.append("</tr>")
+    parts.append("</table></div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+
 def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_file_name: str, ordered_folder_names: list = None):
     """첨부파일 zip 전체 다운로드 + 파일별 미리보기/개별 다운로드 UI를 렌더링.
     ordered_folder_names를 넘기면, 그 순서(=화면 표의 연번 순서) 그대로 폴더를 보여줌
@@ -975,6 +1072,9 @@ with tab1:
                     ordered_folder_names=ordered_names,
                 )
 
+        with st.expander("📅 일정 캘린더 (공고일 · 마감일 · 현장설명회)", expanded=False):
+            render_notice_calendar(filtered_view, key_prefix="today_cal")
+
 with tab2:
     st.markdown(
         """
@@ -1221,6 +1321,9 @@ with tab2:
                         zip_file_name="공고문_첨부파일.zip",
                         ordered_folder_names=hist_ordered_names,
                     )
+
+        with st.expander("📅 일정 캘린더 (공고일 · 마감일 · 현장설명회)", expanded=False):
+            render_notice_calendar(df_hist_view, key_prefix="hist_cal")
 
 with tab3:
     st.subheader("🏘️ 실거래가 조사")

@@ -703,6 +703,7 @@ def apply_filters_and_classify(
         remark = " ".join(note_parts)
 
         notice_dt = format_notice_datetime(pick_field(it, FIELD_CANDIDATES["공고일시"]))
+        close_dt = format_notice_datetime(pick_field(it, FIELD_CANDIDATES["투찰마감"]))
         folder_digits = re.sub(r"\D", "", notice_dt)[:8] if notice_dt else ""
 
         rec = {
@@ -710,6 +711,8 @@ def apply_filters_and_classify(
             "구분": category,
             "세부내역": detail,
             "공고일시": notice_dt,
+            "마감일시": close_dt,
+            "현장설명회일": "",
             "지역": region,
             "공고명": title,
             "발주기관": institution,
@@ -1043,6 +1046,30 @@ def extract_area_info(text: str) -> dict:
     return result
 
 
+SITE_BRIEFING_LABELS = [
+    "현장설명회", "현장 설명회", "현장설명일", "현장설명일자", "현장 설명일",
+    "현장설명회 개최", "현장답사", "현장 답사",
+]
+
+
+def extract_site_briefing_date(text: str) -> str:
+    """공고문/지침서 본문에서 '현장설명회' 날짜를 찾아 YYYY-MM-DD로 반환. 못 찾으면 빈 문자열."""
+    if not text:
+        return ""
+    for label in SITE_BRIEFING_LABELS:
+        m = re.search(
+            _fuzzy_label_pattern(label) + r"[^0-9]{0,15}(\d{4})[.\-년]\s?(\d{1,2})[.\-월]\s?(\d{1,2})",
+            text,
+        )
+        if m:
+            year, month, day = m.group(1), m.group(2), m.group(3)
+            try:
+                return f"{year}-{int(month):02d}-{int(day):02d}"
+            except ValueError:
+                continue
+    return ""
+
+
 def download_attachments_for_row(row, attachment_dir: Path):
     """
     한 공고(row)에 대해 원본 응답 안의 URL들을 다운로드 시도.
@@ -1117,7 +1144,7 @@ def download_attachments_for_row(row, attachment_dir: Path):
 # ---------------------------- 엑셀 출력 ----------------------------
 
 FULL_COLS = [
-    "폴더명", "연번", "구분", "세부내역", "공고일시", "지역", "공고명", "발주기관", "업체명",
+    "폴더명", "연번", "구분", "세부내역", "공고일시", "마감일시", "현장설명회일", "지역", "공고명", "발주기관", "업체명",
     "건축연면적(㎡)", "건축연면적(평)", "대지면적(㎡)", "대지면적(평)",
     "구역면적(㎡)", "구역면적(평)", "입찰금액(원)", "평단가(원)", "비고",
 ]
@@ -1134,7 +1161,7 @@ HEADER_LABELS = {
 }
 
 COL_WIDTHS = {
-    "폴더명": 11, "연번": 6, "구분": 10, "세부내역": 14, "공고일시": 17, "지역": 14,
+    "폴더명": 11, "연번": 6, "구분": 10, "세부내역": 14, "공고일시": 17, "마감일시": 17, "지역": 14,
     "공고명": 42, "발주기관": 30, "업체명": 22,
     "건축연면적(㎡)": 10, "건축연면적(평)": 10, "대지면적(㎡)": 10, "대지면적(평)": 10,
     "구역면적(㎡)": 10, "구역면적(평)": 10, "입찰금액(원)": 13, "평단가(원)": 12, "비고": 20,
@@ -1298,6 +1325,10 @@ def run_pipeline(
                     df.at[idx, "지역"] = region_from_doc
                 for col_name, value in area_info.items():
                     df.at[idx, col_name] = value
+                if doc_text:
+                    briefing_date = extract_site_briefing_date(doc_text)
+                    if briefing_date:
+                        df.at[idx, "현장설명회일"] = briefing_date
 
                 if df.at[idx, "구분"] == "기타" and "협력업체" in str(row["공고명"]) and doc_text:
                     cat, det, svc_name = classify_from_document(doc_text, exclude_title_keywords)
@@ -1408,11 +1439,15 @@ def search_by_institution(
             logger.log(f"첨부파일 다운로드를 시작합니다 ({len(df)}건)...")
             attachment_dir.mkdir(parents=True, exist_ok=True)
             for idx, row in df.iterrows():
-                result_note, region_from_doc, area_info, _doc_text = download_attachments_for_row(row, attachment_dir)
+                result_note, region_from_doc, area_info, doc_text = download_attachments_for_row(row, attachment_dir)
                 if region_from_doc:
                     df.at[idx, "지역"] = region_from_doc
                 for col_name, value in area_info.items():
                     df.at[idx, col_name] = value
+                if doc_text:
+                    briefing_date = extract_site_briefing_date(doc_text)
+                    if briefing_date:
+                        df.at[idx, "현장설명회일"] = briefing_date
                 logger.log(f"  - {row['공고명']}: {result_note}")
 
         df_out = df[FULL_COLS].copy()
