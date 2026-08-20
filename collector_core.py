@@ -1293,6 +1293,19 @@ def run_pipeline(
             )
 
         logger.log(f"조회 완료: 총 {len(raw_items)}건. 필터링을 시작합니다...")
+
+        # [진단용] 마감일시 필드가 안 잡히는 문제 확인을 위해, 첫 공고의 원본 필드명을 로그에 남김.
+        try:
+            sample_item = raw_items[0]
+            close_related = {
+                k: v for k, v in sample_item.items()
+                if not k.startswith("_") and any(s in k.lower() for s in ("close", "clse", "open", "opng", "dt"))
+            }
+            logger.log(f"  [진단] 원본 응답 전체 필드명: {sorted(k for k in sample_item.keys() if not k.startswith('_'))}")
+            logger.log(f"  [진단] 마감/개찰 관련 후보 필드: {close_related}")
+        except Exception:
+            pass
+
         df = apply_filters_and_classify(
             raw_items,
             include_institution_keywords,
