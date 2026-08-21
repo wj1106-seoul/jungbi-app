@@ -852,13 +852,11 @@ if LOGO_B64:
     st.sidebar.markdown(
         f"""
         <div style="
-            padding: 4px 0 18px 0;
-            margin-bottom: 14px;
-            border-bottom: 1px solid #E5E5E5;
+            padding: 6px 0 22px 0;
             text-align: center;
         ">
             <img src="data:image/png;base64,{LOGO_B64}"
-                 style="height:58px; width:auto; display:inline-block;" alt="EGA" />
+                 style="height:52px; width:auto; display:inline-block;" alt="EGA" />
         </div>
         """,
         unsafe_allow_html=True,
