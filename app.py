@@ -32,6 +32,18 @@ st.set_page_config(page_title="정비사업 입찰공고 수집기", page_icon="
 
 BASE_DIR = Path(__file__).resolve().parent
 
+def _load_logo_base64() -> str:
+    """ega_logo.png 를 base64로 읽어옴 (app.py와 같은 폴더). 파일이 없으면 빈 문자열 반환(텍스트 로고로 대체)."""
+    logo_path = BASE_DIR / "ega_logo.png"
+    if not logo_path.exists():
+        return ""
+    try:
+        return base64.b64encode(logo_path.read_bytes()).decode("utf-8")
+    except Exception:
+        return ""
+
+LOGO_B64 = _load_logo_base64()
+
 # ------------------------------------------------------------------
 # 디자인 (커스텀 CSS) - 사내 인트라넷(EGA) 톤에 맞춘 오렌지 테마
 # ------------------------------------------------------------------
@@ -59,6 +71,9 @@ st.markdown(
     .app-header .logo {{
         font-size: 30px; font-weight: 800; color: {BRAND_ORANGE};
         letter-spacing: 1px; line-height: 1;
+    }}
+    .app-header .logo img {{
+        height: 42px; width: auto; display: block;
     }}
     .app-header .title-block h1 {{
         color: #222222; font-size: 22px; margin: 0 0 4px 0; font-weight: 700;
@@ -227,6 +242,9 @@ st.markdown(
         .app-header .logo {{
             font-size: 22px;
         }}
+        .app-header .logo img {{
+            height: 30px;
+        }}
         .app-header .title-block h1 {{
             font-size: 17px;
         }}
@@ -286,6 +304,13 @@ if st.session_state.auth_role is None:
 
         .login-logo {{
             text-align: center;
+            margin-bottom: 6px;
+        }}
+        .login-logo img {{
+            height: 64px; width: auto;
+        }}
+        .login-logo-text {{
+            text-align: center;
             font-size: 46px;
             font-weight: 800;
             color: {BRAND_ORANGE};
@@ -342,12 +367,16 @@ if st.session_state.auth_role is None:
         unsafe_allow_html=True,
     )
 
+    _login_logo_html = (
+        f'<div class="login-logo"><img src="data:image/png;base64,{LOGO_B64}" alt="EGA" /></div>'
+        if LOGO_B64 else '<div class="login-logo-text">EGA</div>'
+    )
     _, login_col, _ = st.columns([1, 1.2, 1])
     with login_col:
         with st.container(key="login_box"):
             st.markdown(
-                """
-                <div class="login-logo">EGA</div>
+                f"""
+                {_login_logo_html}
                 <div class="login-subtitle">정비사업 입찰공고 수집기</div>
                 """,
                 unsafe_allow_html=True,
@@ -908,10 +937,13 @@ if is_admin:
 # ------------------------------------------------------------------
 # 메인 화면
 # ------------------------------------------------------------------
+_logo_html = (
+    f'<img src="data:image/png;base64,{LOGO_B64}" alt="EGA" />' if LOGO_B64 else "EGA"
+)
 st.markdown(
-    """
+    f"""
     <div class="app-header">
-        <div class="logo">EGA</div>
+        <div class="logo">{_logo_html}</div>
         <div class="title-block">
             <h1>정비사업 입찰공고 수집기</h1>
             <p>누리장터 민간입찰공고 중 정비사업 관련 기술용역 공고만 자동으로 걸러서 보여줍니다.</p>
