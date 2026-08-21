@@ -326,16 +326,19 @@ if st.session_state.auth_role is None:
             margin-bottom: 24px;
         }}
 
-        /* 비밀번호 입력창 박스 스타일 (여러 Streamlit 버전 대응) */
-        .st-key-login_box div[data-testid="stTextInput"] > div,
-        .st-key-login_box div[data-baseweb="input"],
-        .st-key-login_box div[data-baseweb="base-input"] {{
+        /* 비밀번호 입력창 박스 스타일 — 로그인 화면엔 입력창이 이것 하나뿐이라 범위를 넓게 잡음 */
+        .stApp div[data-testid="stTextInput"] div[data-baseweb="input"],
+        .stApp div[data-testid="stTextInput"] div[data-baseweb="base-input"],
+        .stApp div[data-testid="stTextInput"] > div > div,
+        .stApp div[data-testid="stTextInputRootElement"] {{
             background-color: #EAF1FE !important;
             border: 2px solid #1A1A1A !important;
             border-radius: 8px !important;
             box-shadow: none !important;
         }}
-        .st-key-login_box input {{
+        .stApp div[data-testid="stTextInput"] input,
+        .stApp input[type="password"],
+        .stApp input[type="text"] {{
             padding: 14px 16px !important;
             font-size: 15px !important;
             color: #333333 !important;
@@ -343,8 +346,10 @@ if st.session_state.auth_role is None:
             background-color: transparent !important;
         }}
 
-        /* Login 버튼 */
-        .st-key-login_box div[data-testid="stFormSubmitButton"] button {{
+        /* Login 버튼 — 로그인 화면엔 폼 버튼이 이것 하나뿐이라 범위를 넓게 잡음 */
+        .stApp div[data-testid="stFormSubmitButton"] button,
+        .stApp button[kind="primaryFormSubmit"],
+        .stApp button[kind="formSubmit"] {{
             background-color: {BRAND_ORANGE} !important;
             color: #FFFFFF !important;
             border: none !important;
@@ -354,11 +359,11 @@ if st.session_state.auth_role is None:
             padding: 13px 0 !important;
             margin-top: 10px;
         }}
-        .st-key-login_box div[data-testid="stFormSubmitButton"] button:hover {{
+        .stApp div[data-testid="stFormSubmitButton"] button:hover {{
             background-color: {BRAND_ORANGE_DARK} !important;
         }}
         /* st.form 자체의 기본 테두리/배경 제거 (구버전 Streamlit 대비 안전장치) */
-        .st-key-login_box div[data-testid="stForm"] {{
+        .stApp div[data-testid="stForm"] {{
             border: none !important;
             background: transparent !important;
             padding: 0 !important;
