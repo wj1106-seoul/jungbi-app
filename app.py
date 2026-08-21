@@ -844,7 +844,16 @@ def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_fi
 # ------------------------------------------------------------------
 if LOGO_B64:
     st.sidebar.markdown(
-        f'<img src="data:image/png;base64,{LOGO_B64}" style="height:36px; margin-bottom:10px;" alt="EGA" />',
+        f"""
+        <div style="
+            padding: 4px 0 18px 0;
+            margin-bottom: 14px;
+            border-bottom: 1px solid #E5E5E5;
+        ">
+            <img src="data:image/png;base64,{LOGO_B64}"
+                 style="height:58px; width:auto; display:block;" alt="EGA" />
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 
