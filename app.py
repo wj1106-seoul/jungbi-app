@@ -298,6 +298,7 @@ if st.session_state.auth_role is None:
         .st-key-login_box {{
             background: #FFFFFF !important;
             border-top: 6px solid {BRAND_ORANGE};
+            border-radius: 10px;
             box-shadow: 0 2px 12px rgba(0,0,0,0.12);
             padding: 45px 40px 35px 40px;
         }}
@@ -329,13 +330,13 @@ if st.session_state.auth_role is None:
         .st-key-login_box div[data-testid="stTextInput"] > div,
         .st-key-login_box div[data-baseweb="input"],
         .st-key-login_box div[data-baseweb="base-input"] {{
-            background-color: #FFFFFF !important;
-            border: 1px solid #CCCCCC !important;
-            border-radius: 0 !important;
+            background-color: #EAF1FE !important;
+            border: 2px solid #1A1A1A !important;
+            border-radius: 8px !important;
             box-shadow: none !important;
         }}
         .st-key-login_box input {{
-            padding: 12px 14px !important;
+            padding: 14px 16px !important;
             font-size: 15px !important;
             color: #333333 !important;
             -webkit-text-fill-color: #333333 !important;
@@ -347,11 +348,11 @@ if st.session_state.auth_role is None:
             background-color: {BRAND_ORANGE} !important;
             color: #FFFFFF !important;
             border: none !important;
-            border-radius: 0 !important;
+            border-radius: 8px !important;
             font-weight: 700 !important;
             font-size: 16px !important;
-            padding: 12px 0 !important;
-            margin-top: 6px;
+            padding: 13px 0 !important;
+            margin-top: 10px;
         }}
         .st-key-login_box div[data-testid="stFormSubmitButton"] button:hover {{
             background-color: {BRAND_ORANGE_DARK} !important;
