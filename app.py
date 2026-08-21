@@ -848,20 +848,6 @@ def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_fi
 # ------------------------------------------------------------------
 # 사이드바 - 실행 옵션 + 필터 편집
 # ------------------------------------------------------------------
-if LOGO_B64:
-    st.sidebar.markdown(
-        f"""
-        <div style="
-            padding: 6px 0 22px 0;
-            text-align: center;
-        ">
-            <img src="data:image/png;base64,{LOGO_B64}"
-                 style="height:52px; width:auto; display:inline-block;" alt="EGA" />
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
 st.sidebar.header("⚙️ 실행 옵션")
 
 role_label = "🔑 관리자" if is_admin else "👤 팀원"
