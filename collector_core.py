@@ -1116,6 +1116,27 @@ def download_attachments_for_row(row, attachment_dir: Path):
             continue
 
         content_head = tmp_path.read_bytes()[:8]
+        content_head_long = tmp_path.read_bytes()[:300].lstrip().lower()
+        looks_like_html_error = (
+            content_head_long.startswith(b"<!doctype html")
+            or content_head_long.startswith(b"<html")
+            or content_head_long.startswith(b"<?xml")  # 일부 오류/안내 응답이 xml로 오는 경우
+            or b"<html" in content_head_long[:100]
+        )
+        # 실제 문서(매직바이트로 인식됨)인데 우연히 <html 문자열을 포함하는 경우는 오탐 방지
+        is_recognized_doc = (
+            content_head.startswith(b"%PDF")
+            or content_head.startswith(b"PK\x03\x04")
+            or content_head.startswith(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1")
+        )
+        if looks_like_html_error and not is_recognized_doc:
+            results.append(f"{field_name} 실패(서버가 오류/안내 페이지를 반환함 - 문서 아님)")
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+            continue
+
         ext = guess_extension(download_url, "", content_head)
         doc_label = doc_labels[idx - 1] if idx <= len(doc_labels) else f"첨부{idx}"
 
@@ -1293,19 +1314,6 @@ def run_pipeline(
             )
 
         logger.log(f"조회 완료: 총 {len(raw_items)}건. 필터링을 시작합니다...")
-
-        # [진단용] 마감일시 필드가 안 잡히는 문제 확인을 위해, 첫 공고의 원본 필드명을 로그에 남김.
-        try:
-            sample_item = raw_items[0]
-            close_related = {
-                k: v for k, v in sample_item.items()
-                if not k.startswith("_") and any(s in k.lower() for s in ("close", "clse", "open", "opng", "dt"))
-            }
-            logger.log(f"  [진단] 원본 응답 전체 필드명: {sorted(k for k in sample_item.keys() if not k.startswith('_'))}")
-            logger.log(f"  [진단] 마감/개찰 관련 후보 필드: {close_related}")
-        except Exception:
-            pass
-
         df = apply_filters_and_classify(
             raw_items,
             include_institution_keywords,
