@@ -602,14 +602,28 @@ def fetch_all(biz_type: str, date_chunks: list, service_key: str, logger: "_Logg
     operation = OPERATION_BY_BIZ[biz_type]
     url_prefixes = list(URL_PREFIX_CANDIDATES_DEFAULT)
     all_items = []
+    RETRY_ATTEMPTS = 3
+    RETRY_DELAY_SECONDS = 5
     for begin_dt, end_dt in date_chunks:
         page_no = 1
         while True:
-            try:
-                items, total_count = fetch_one_page(operation, begin_dt, end_dt, page_no, service_key, url_prefixes)
-            except RuntimeError as e:
+            items = None
+            total_count = 0
+            last_error = None
+            for attempt in range(1, RETRY_ATTEMPTS + 1):
+                try:
+                    items, total_count = fetch_one_page(operation, begin_dt, end_dt, page_no, service_key, url_prefixes)
+                    last_error = None
+                    break
+                except RuntimeError as e:
+                    last_error = e
+                    if attempt < RETRY_ATTEMPTS:
+                        if logger:
+                            logger.log(f"  [!] {biz_type} 조회 연결 지연, 재시도합니다... ({attempt}/{RETRY_ATTEMPTS})")
+                        time.sleep(RETRY_DELAY_SECONDS)
+            if last_error is not None:
                 if logger:
-                    logger.log(f"  [!] {biz_type} 조회 중 오류: {e}")
+                    logger.log(f"  [!] {biz_type} 조회 중 오류(재시도 {RETRY_ATTEMPTS}회 모두 실패): {last_error}")
                 break
             if not items:
                 break
