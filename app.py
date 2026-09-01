@@ -26,7 +26,6 @@ import altair as alt
 
 import collector_core as core
 import realestate_core as re_core
-import report_realestate as rr_report
 
 st.set_page_config(page_title="정비사업 입찰공고 수집기", page_icon="🏗️", layout="wide")
 
@@ -959,13 +958,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-tab_labels = ["📅 오늘의 공고 수집", "🏢 조합별 이력 조회", "🏘️ 실거래가 조사"]
-if is_admin:
-    tab_labels.append("📊 월간 분석 보고서")
+tab_labels = ["📅 오늘의 공고 수집", "🏢 조합별 이력 조회", "🏘️ 실거래가 조사", "📰 뉴스 스크랩"]
 
 _tabs = st.tabs(tab_labels)
-tab1, tab2, tab3 = _tabs[0], _tabs[1], _tabs[2]
-tab4 = _tabs[3] if is_admin else None
+tab1, tab2, tab3, tab_news = _tabs[0], _tabs[1], _tabs[2], _tabs[3]
 
 with tab1:
     col_run, col_status = st.columns([1, 4])
@@ -1614,83 +1610,77 @@ with tab3:
         else:
             st.caption("시·도 → 시·군·구 → 기간을 선택한 뒤 조회 버튼을 눌러주세요.")
 
-if is_admin:
-    with tab4:
-        st.subheader("📊 부동산 실거래가 분석 보고서 (관리자 전용)")
-        st.caption(
-            "실거래가 원본 데이터가 담긴 '원본데이터' 시트를 포함한 엑셀을 업로드하면, "
-            "동별·용도별 요약, 업무 지번별 분기추이, 근린생활 면적구간 분석, 층효과 비교 4개 "
-            "집계시트를 다시 계산해드립니다. 원본데이터 시트는 그대로 보존됩니다."
+with tab_news:
+    import news_core
+
+    st.subheader("📰 뉴스 스크랩")
+    st.caption("정비사업·사옥·물류센터·오피스·공장 관련 뉴스를 구글 뉴스에서 자동으로 모아 보여줍니다.")
+
+    default_keywords_text = "\n".join(news_core.DEFAULT_KEYWORDS)
+    with st.expander("🔧 검색 키워드 편집", expanded=False):
+        keywords_text = st.text_area(
+            "한 줄에 키워드 하나씩 입력하세요.",
+            value=default_keywords_text,
+            height=150,
+            key="news_keywords_text",
         )
+    current_keywords_text = st.session_state.get("news_keywords_text", default_keywords_text)
+    keywords = [k.strip() for k in current_keywords_text.split("\n") if k.strip()]
 
-        uploaded_re = st.file_uploader(
-            "실거래가 분석 엑셀 업로드 (.xlsx, '원본데이터' 시트 포함)", type=["xlsx"], key="re_report_upload"
-        )
+    col_a, col_b = st.columns(2)
+    with col_a:
+        news_days_back = st.number_input("최근 며칠 이내 기사만", min_value=1, max_value=30, value=7, key="news_days_back")
+    with col_b:
+        news_max_per_kw = st.number_input("키워드당 최대 기사 수", min_value=5, max_value=50, value=15, key="news_max_per_kw")
 
-        area_threshold = st.number_input(
-            "업무시설 '표준면적' 기준 (이 값 미만만 지번별 분기추이에 포함, ㎡)",
-            min_value=10.0, max_value=200.0, value=50.0, step=5.0, key="re_report_area_threshold",
-        )
+    if st.button("📰 뉴스 수집하기", type="primary", key="news_collect_btn"):
+        news_log_area = st.expander("실행 로그", expanded=True)
 
-        if "re_report_excel_bytes" not in st.session_state:
-            st.session_state.re_report_excel_bytes = None
+        class _NewsLogger:
+            def __init__(self, area):
+                self.area = area
+                self.lines = []
 
-        gen_clicked = st.button(
-            "🔄 보고서 생성", type="primary", key="re_report_gen_btn",
-            disabled=uploaded_re is None,
-        )
+            def log(self, msg):
+                self.lines.append(msg)
+                self.area.code("\n".join(self.lines))
 
-        if gen_clicked and uploaded_re is not None:
-            input_bytes = uploaded_re.read()
-            re_report_status = st.empty()
-
-            def _re_report_progress(msg):
-                re_report_status.info(msg)
-
-            try:
-                with st.spinner("집계시트 재계산 중..."):
-                    excel_bytes = rr_report.refresh_realestate_excel_bytes(
-                        input_bytes, area_threshold=area_threshold, progress_cb=_re_report_progress
-                    )
-                    df_preview = rr_report.build_master_df(input_bytes)
-                re_report_status.empty()
-                st.session_state.re_report_excel_bytes = excel_bytes
-                st.session_state.re_report_file_stem = Path(uploaded_re.name).stem
-                st.success(f"생성 완료! (거래 {len(df_preview):,}건)")
-            except Exception as e:
-                re_report_status.empty()
-                st.error(f"보고서 생성 중 오류가 발생했습니다: {e}")
-
-        if st.session_state.get("re_report_excel_bytes"):
-            st.divider()
-            stem = st.session_state.get("re_report_file_stem", "실거래가_분석")
-            st.download_button(
-                "⬇️ 갱신된 엑셀 다운로드",
-                data=st.session_state.re_report_excel_bytes,
-                file_name=f"{stem}_갱신.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                type="primary",
-                key="re_report_excel_dl",
+        news_logger = _NewsLogger(news_log_area)
+        with st.spinner("뉴스를 수집하는 중입니다..."):
+            news_df = news_core.collect_news(
+                keywords,
+                max_items_per_keyword=int(news_max_per_kw),
+                days_back=int(news_days_back),
+                logger=news_logger,
             )
+        st.session_state["news_result_df"] = news_df
 
-        with st.expander("ℹ️ 알려진 한계 (참고)"):
-            st.markdown(
-                "- **층효과_비교의 '업무' 상관계수** 1개 값만 예시 파일과 정확히 재현되지 않았습니다. "
-                "표본이 적을 때 이상치 하나로도 상관계수가 크게 흔들리는 값이라, 다른 핵심 집계표(동별 요약, "
-                "면적구간분석, 지번별 분기추이 등)보다 중요도가 낮다고 보고 우선 진행했습니다.\n"
-                "- **업무 층 구간**은 5~10층/11~15층/16~20층만 집계합니다(1~4층·21층 이상은 표본이 매우 "
-                "적어 제외). 필요하시면 구간을 조정해드릴 수 있어요.\n"
-                "- 이 자동화는 실거래가 조회 탭에서 받은 데이터를 '원본데이터' 시트 형태(법정동/지번/건물유형/"
-                "건물주용도/계약일/거래금액(원)/건물면적(㎡)/대지면적(㎡)/평당가(원)/층/비고 컬럼)로 정리한 "
-                "파일을 전제로 합니다."
-            )
+    news_result_df = st.session_state.get("news_result_df")
+    if news_result_df is not None and not news_result_df.empty:
+        st.success(f"총 {len(news_result_df)}건의 뉴스를 찾았습니다.")
 
-st.divider()
-with st.expander("📜 최근 실행 로그 파일 보기"):
-    log_files = sorted(core.LOG_DIR.glob("collector_*.log"), reverse=True)
-    if not log_files:
-        st.caption("아직 로그 파일이 없습니다.")
+        kw_options = ["전체"] + sorted(news_result_df["키워드"].unique().tolist())
+        selected_kw = st.selectbox("키워드 필터", kw_options, key="news_kw_filter")
+        display_df = news_result_df if selected_kw == "전체" else news_result_df[news_result_df["키워드"] == selected_kw]
+
+        st.dataframe(
+            display_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "링크": st.column_config.LinkColumn("링크", display_text="기사 보기"),
+            },
+        )
+
+        excel_bytes = news_core.build_news_excel_bytes(display_df)
+        st.download_button(
+            "⬇️ 엑셀로 다운로드",
+            data=excel_bytes,
+            file_name=f"뉴스스크랩_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+    elif news_result_df is not None:
+        st.info("검색 결과가 없습니다. 키워드나 기간을 조정해보세요.")
     else:
-        chosen = st.selectbox("로그 파일 선택", [f.name for f in log_files])
-        chosen_path = core.LOG_DIR / chosen
-        st.code(chosen_path.read_text(encoding="utf-8")[-8000:])
+        st.caption("'뉴스 수집하기' 버튼을 눌러 시작하세요.")
+
