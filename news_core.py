@@ -7,8 +7,10 @@ news_core.py - 키워드 기반 뉴스 스크랩 (구글 뉴스 RSS)
  구조를 열어두었습니다.)
 """
 import time
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from html.parser import HTMLParser
 
 import pandas as pd
 import requests
@@ -143,7 +145,80 @@ def build_news_excel_bytes(df: pd.DataFrame) -> bytes:
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name="뉴스스크랩")
         ws = writer.sheets["뉴스스크랩"]
-        widths = {"A": 6, "B": 14, "C": 55, "D": 16, "E": 12, "F": 60}
+        widths = {"A": 6, "B": 14, "C": 45, "D": 16, "E": 12, "F": 50, "G": 12}
         for col, w in widths.items():
             ws.column_dimensions[col].width = w
     return buf.getvalue()
+
+
+class _MetaDescriptionParser(HTMLParser):
+    """기사 페이지의 <meta name="description"> / <meta property="og:description"> 값을 추출."""
+
+    def __init__(self):
+        super().__init__()
+        self.description = ""
+        self.title_fallback = ""
+        self._in_title = False
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        if tag == "meta":
+            name = (attrs_dict.get("name") or "").lower()
+            prop = (attrs_dict.get("property") or "").lower()
+            content = attrs_dict.get("content") or ""
+            if content and (name == "description" or prop in ("og:description", "twitter:description")):
+                if not self.description:
+                    self.description = content.strip()
+        elif tag == "title":
+            self._in_title = True
+
+    def handle_data(self, data):
+        if self._in_title and not self.title_fallback:
+            self.title_fallback = data.strip()
+
+    def handle_endtag(self, tag):
+        if tag == "title":
+            self._in_title = False
+
+
+def fetch_article_summary(url: str, timeout: float = 6.0) -> str:
+    """기사 실제 페이지에 접속해서 메타 요약(검색엔진용 소개문)을 가져옴.
+    구글 뉴스 링크는 실제 언론사 사이트로 리다이렉트되는데, 사이트에 따라
+    요약을 못 가져올 수 있고, 이 경우 빈 문자열을 반환함(오류로 처리하지 않음)."""
+    try:
+        resp = requests.get(
+            url,
+            timeout=timeout,
+            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            allow_redirects=True,
+        )
+        if resp.status_code != 200:
+            return ""
+        # 너무 큰 페이지는 앞부분만 파싱(속도/메모리 절약, head 태그 안에 메타태그가 있으므로 충분)
+        html_head = resp.text[:20000]
+        parser = _MetaDescriptionParser()
+        parser.feed(html_head)
+        summary = parser.description or ""
+        summary = re.sub(r"\s+", " ", summary).strip()
+        return summary[:200]  # 너무 길면 200자로 자름
+    except Exception:
+        return ""
+
+
+def add_summaries(df: pd.DataFrame, max_articles: int = 30, logger=None) -> pd.DataFrame:
+    """DataFrame의 각 기사에 대해 요약을 가져와 '요약' 컬럼을 추가.
+    기사 수가 많으면 시간이 오래 걸릴 수 있어 max_articles로 상한을 둠."""
+    if df.empty:
+        return df
+    df = df.copy()
+    summaries = []
+    n = min(len(df), max_articles)
+    for i, row in df.iterrows():
+        if i >= max_articles:
+            summaries.append("")
+            continue
+        if logger:
+            logger.log(f"  ({i + 1}/{n}) 요약 가져오는 중: {row['제목'][:30]}...")
+        summaries.append(fetch_article_summary(row["링크"]))
+    df["요약"] = summaries
+    return df

@@ -1643,6 +1643,17 @@ with tab_news:
     with col_b:
         news_max_per_kw = st.number_input("키워드당 최대 기사 수", min_value=5, max_value=50, value=15, key="news_max_per_kw")
 
+    fetch_summary = st.checkbox(
+        "📝 각 기사 핵심 요약도 함께 가져오기 (기사마다 접속해서 가져오므로 다소 느려질 수 있어요)",
+        value=False,
+        key="news_fetch_summary",
+    )
+    if fetch_summary:
+        news_summary_limit = st.number_input(
+            "요약을 가져올 최대 기사 수 (많을수록 오래 걸려요)",
+            min_value=5, max_value=60, value=20, key="news_summary_limit",
+        )
+
     if st.button("📰 뉴스 수집하기", type="primary", key="news_collect_btn"):
         news_log_area = st.expander("실행 로그", expanded=True)
 
@@ -1664,6 +1675,11 @@ with tab_news:
                 exclude_keywords=exclude_keywords,
                 logger=news_logger,
             )
+            if fetch_summary and not news_df.empty:
+                with st.spinner("기사 핵심 요약을 가져오는 중입니다... (기사 수에 따라 1~2분 걸릴 수 있어요)"):
+                    news_df = news_core.add_summaries(
+                        news_df, max_articles=int(st.session_state.get("news_summary_limit", 20)), logger=news_logger
+                    )
         st.session_state["news_result_df"] = news_df
 
     news_result_df = st.session_state.get("news_result_df")
@@ -1674,13 +1690,17 @@ with tab_news:
         selected_kw = st.selectbox("키워드 필터", kw_options, key="news_kw_filter")
         display_df = news_result_df if selected_kw == "전체" else news_result_df[news_result_df["키워드"] == selected_kw]
 
+        column_config = {
+            "링크": st.column_config.LinkColumn("링크", display_text="기사 보기"),
+        }
+        if "요약" in display_df.columns:
+            column_config["요약"] = st.column_config.TextColumn("요약", width="large")
+
         st.dataframe(
             display_df,
             use_container_width=True,
             hide_index=True,
-            column_config={
-                "링크": st.column_config.LinkColumn("링크", display_text="기사 보기"),
-            },
+            column_config=column_config,
         )
 
         excel_bytes = news_core.build_news_excel_bytes(display_df)
