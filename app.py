@@ -1617,6 +1617,7 @@ with tab_news:
     st.caption("정비사업·사옥·물류센터·오피스·공장 관련 뉴스를 구글 뉴스에서 자동으로 모아 보여줍니다.")
 
     default_keywords_text = "\n".join(news_core.DEFAULT_KEYWORDS)
+    default_exclude_text = "\n".join(news_core.DEFAULT_EXCLUDE_KEYWORDS)
     with st.expander("🔧 검색 키워드 편집", expanded=False):
         keywords_text = st.text_area(
             "한 줄에 키워드 하나씩 입력하세요.",
@@ -1624,8 +1625,17 @@ with tab_news:
             height=150,
             key="news_keywords_text",
         )
+    with st.expander("🚫 제외 키워드 편집 (제목에 이 단어가 있으면 결과에서 뺍니다)", expanded=False):
+        exclude_text = st.text_area(
+            "한 줄에 단어 하나씩 입력하세요. (예: 화재, 사고, 파업 등 사건사고성 기사 걸러내기)",
+            value=default_exclude_text,
+            height=150,
+            key="news_exclude_text",
+        )
     current_keywords_text = st.session_state.get("news_keywords_text", default_keywords_text)
     keywords = [k.strip() for k in current_keywords_text.split("\n") if k.strip()]
+    current_exclude_text = st.session_state.get("news_exclude_text", default_exclude_text)
+    exclude_keywords = [k.strip() for k in current_exclude_text.split("\n") if k.strip()]
 
     col_a, col_b = st.columns(2)
     with col_a:
@@ -1651,6 +1661,7 @@ with tab_news:
                 keywords,
                 max_items_per_keyword=int(news_max_per_kw),
                 days_back=int(news_days_back),
+                exclude_keywords=exclude_keywords,
                 logger=news_logger,
             )
         st.session_state["news_result_df"] = news_df

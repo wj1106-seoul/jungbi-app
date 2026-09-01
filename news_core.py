@@ -20,8 +20,26 @@ DEFAULT_KEYWORDS = [
     "사옥 신축",
     "사옥 투자",
     "물류센터 투자",
-    "오피스 사옥",
-    "공장",
+    "오피스 빌딩 매입",
+    "공장 부지 매입",
+]
+
+# 제목에 이 단어들이 포함되면 부동산/개발·민간투자와 무관한 기사로 보고 제외
+DEFAULT_EXCLUDE_KEYWORDS = [
+    # 사건사고
+    "화재", "사고", "폭발", "붕괴", "사망", "부상", "파업",
+    # 법적 분쟁
+    "논란", "검찰", "구속", "기소", "재판", "소송", "고소", "판결",
+    # 주식·실적
+    "실적", "주가", "배당", "상장", "공모주", "IPO",
+    # "정비"의 다른 뜻 (차량·장비 정비 등, 재건축·재개발과 무관)
+    "차량정비", "정비창", "군수", "카센터",
+    # 공공기관 건물 (민간분야만 원하므로 관공서 관련 제외)
+    "관공서", "정부청사", "시청사", "구청사", "공공청사",
+    # 인사·채용
+    "채용", "인사발령", "승진",
+    # 가십·연예
+    "연예", "드라마", "예능",
 ]
 
 
@@ -70,17 +88,36 @@ def fetch_google_news(keyword: str, max_items: int = 15, days_back: int = 7) -> 
     return items
 
 
-def collect_news(keywords: list, max_items_per_keyword: int = 15, days_back: int = 7, logger=None) -> pd.DataFrame:
-    """여러 키워드에 대해 구글 뉴스를 수집하고, 중복 제거 및 최신순 정렬된 DataFrame 반환."""
+def collect_news(
+    keywords: list,
+    max_items_per_keyword: int = 15,
+    days_back: int = 7,
+    exclude_keywords: list = None,
+    logger=None,
+) -> pd.DataFrame:
+    """여러 키워드에 대해 구글 뉴스를 수집하고, 제외 키워드 필터링 + 중복 제거 + 최신순 정렬된 DataFrame 반환."""
+    exclude_keywords = exclude_keywords or []
     all_items = []
+    excluded_count = 0
     for kw in keywords:
         if logger:
             logger.log(f"'{kw}' 뉴스 검색 중...")
         try:
             items = fetch_google_news(kw, max_items=max_items_per_keyword, days_back=days_back)
-            all_items.extend(items)
+            kept_items = []
+            for it in items:
+                title_lower = it["제목"].lower()
+                if any(ex.strip().lower() in title_lower for ex in exclude_keywords if ex.strip()):
+                    excluded_count += 1
+                    continue
+                kept_items.append(it)
+            all_items.extend(kept_items)
             if logger:
-                logger.log(f"  -> {len(items)}건 수집")
+                skipped = len(items) - len(kept_items)
+                msg = f"  -> {len(kept_items)}건 수집"
+                if skipped:
+                    msg += f" (제외 키워드로 {skipped}건 걸러냄)"
+                logger.log(msg)
         except Exception as e:
             if logger:
                 logger.log(f"  [!] '{kw}' 검색 중 오류: {e}")
