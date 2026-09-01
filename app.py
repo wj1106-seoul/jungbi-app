@@ -1643,14 +1643,21 @@ with tab_news:
     with col_b:
         news_max_per_kw = st.number_input("키워드당 최대 기사 수", min_value=5, max_value=50, value=15, key="news_max_per_kw")
 
+    gemini_api_key = st.secrets.get("GEMINI_API_KEY", "")
+
     fetch_summary = st.checkbox(
-        "📝 각 기사 핵심 요약도 함께 가져오기 (기사마다 접속해서 가져오므로 다소 느려질 수 있어요)",
+        "🤖 각 기사 본문을 AI가 읽고 핵심 요약 만들기 (Gemini 사용, 기사마다 접속하므로 다소 느려질 수 있어요)",
         value=False,
         key="news_fetch_summary",
     )
+    if fetch_summary and not gemini_api_key:
+        st.warning(
+            "⚠️ Gemini API 키가 설정되어 있지 않습니다. Streamlit Cloud의 Secrets에 "
+            "`GEMINI_API_KEY = \"발급받은키\"` 를 추가한 뒤 다시 시도해주세요."
+        )
     if fetch_summary:
         news_summary_limit = st.number_input(
-            "요약을 가져올 최대 기사 수 (많을수록 오래 걸려요)",
+            "요약을 만들 최대 기사 수 (많을수록 오래 걸리고, 무료 사용량도 더 씁니다)",
             min_value=5, max_value=60, value=20, key="news_summary_limit",
         )
 
@@ -1675,10 +1682,13 @@ with tab_news:
                 exclude_keywords=exclude_keywords,
                 logger=news_logger,
             )
-            if fetch_summary and not news_df.empty:
-                with st.spinner("기사 핵심 요약을 가져오는 중입니다... (기사 수에 따라 1~2분 걸릴 수 있어요)"):
-                    news_df = news_core.add_summaries(
-                        news_df, max_articles=int(st.session_state.get("news_summary_limit", 20)), logger=news_logger
+            if fetch_summary and gemini_api_key and not news_df.empty:
+                with st.spinner("AI가 기사 본문을 읽고 요약을 만드는 중입니다... (기사 수에 따라 1~2분 걸릴 수 있어요)"):
+                    news_df = news_core.add_ai_summaries(
+                        news_df,
+                        gemini_api_key=gemini_api_key,
+                        max_articles=int(st.session_state.get("news_summary_limit", 20)),
+                        logger=news_logger,
                     )
         st.session_state["news_result_df"] = news_df
 

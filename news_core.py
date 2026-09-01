@@ -181,7 +181,7 @@ class _MetaDescriptionParser(HTMLParser):
             self._in_title = False
 
 
-def fetch_article_summary(url: str, timeout: float = 6.0) -> str:
+def fetch_article_summary(url: str, timeout: float = 6.0, logger=None) -> str:
     """기사 실제 페이지에 접속해서 메타 요약(검색엔진용 소개문)을 가져옴.
     구글 뉴스 링크는 실제 언론사 사이트로 리다이렉트되는데, 사이트에 따라
     요약을 못 가져올 수 있고, 이 경우 빈 문자열을 반환함(오류로 처리하지 않음)."""
@@ -192,22 +192,118 @@ def fetch_article_summary(url: str, timeout: float = 6.0) -> str:
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
             allow_redirects=True,
         )
+        final_url = resp.url
+        # [진단] 구글 뉴스 링크가 실제 언론사 사이트로 안 넘어가고 구글 도메인에 그대로 머물러 있는지 확인
+        if logger:
+            stayed_on_google = "news.google.com" in final_url or "google.com" in final_url
+            logger.log(
+                f"    [진단] 최종 도달 주소: {final_url[:100]} "
+                f"{'(⚠️ 구글에 머물러 있음, 실제 기사로 못 넘어감)' if stayed_on_google else '(언론사 사이트 도달함)'}"
+            )
         if resp.status_code != 200:
+            if logger:
+                logger.log(f"    [진단] 상태코드 {resp.status_code}로 실패")
             return ""
-        # 너무 큰 페이지는 앞부분만 파싱(속도/메모리 절약, head 태그 안에 메타태그가 있으므로 충분)
         html_head = resp.text[:20000]
         parser = _MetaDescriptionParser()
         parser.feed(html_head)
         summary = parser.description or ""
         summary = re.sub(r"\s+", " ", summary).strip()
+        if logger and not summary:
+            logger.log(f"    [진단] 페이지는 받았지만 meta description 태그를 못 찾음")
         return summary[:200]  # 너무 길면 200자로 자름
-    except Exception:
+    except Exception as e:
+        if logger:
+            logger.log(f"    [진단] 접속 자체 실패: {e}")
         return ""
 
 
-def add_summaries(df: pd.DataFrame, max_articles: int = 30, logger=None) -> pd.DataFrame:
-    """DataFrame의 각 기사에 대해 요약을 가져와 '요약' 컬럼을 추가.
-    기사 수가 많으면 시간이 오래 걸릴 수 있어 max_articles로 상한을 둠."""
+class _ArticleBodyParser(HTMLParser):
+    """기사 페이지에서 본문으로 보이는 <p> 태그들의 텍스트를 모아 추출."""
+
+    def __init__(self):
+        super().__init__()
+        self.paragraphs = []
+        self._in_p = False
+        self._in_skip_tag = False  # script/style 안의 텍스트는 무시
+        self._buf = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "p":
+            self._in_p = True
+            self._buf = []
+        elif tag in ("script", "style"):
+            self._in_skip_tag = True
+
+    def handle_endtag(self, tag):
+        if tag == "p" and self._in_p:
+            text = "".join(self._buf).strip()
+            if len(text) > 15:  # 너무 짧은(버튼 라벨 등) 조각은 제외
+                self.paragraphs.append(text)
+            self._in_p = False
+        elif tag in ("script", "style"):
+            self._in_skip_tag = False
+
+    def handle_data(self, data):
+        if self._in_p and not self._in_skip_tag:
+            self._buf.append(data)
+
+
+def extract_article_text(html: str, max_chars: int = 3000) -> str:
+    """HTML에서 본문 <p> 태그 텍스트만 모아 하나의 문자열로 반환."""
+    parser = _ArticleBodyParser()
+    try:
+        parser.feed(html)
+    except Exception:
+        pass
+    full_text = "\n".join(parser.paragraphs)
+    full_text = re.sub(r"[ \t]+", " ", full_text).strip()
+    return full_text[:max_chars]
+
+
+GEMINI_API_URL_TEMPLATE = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+
+def summarize_with_gemini(article_text: str, api_key: str, model: str = "gemini-2.5-flash", timeout: float = 30.0) -> str:
+    """기사 본문 텍스트를 Gemini에게 보내 2~3문장 한국어 핵심요약을 받아옴."""
+    if not article_text.strip():
+        return ""
+    prompt = (
+        "다음은 뉴스 기사 본문입니다. 이 기사의 핵심 내용을 한국어로 2~3문장으로만 "
+        "간결하게 요약해 주세요. 다른 설명이나 서두 없이 요약 내용만 답하세요.\n\n"
+        f"기사 본문:\n{article_text}"
+    )
+    url = GEMINI_API_URL_TEMPLATE.format(model=model)
+    payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+    try:
+        resp = requests.post(
+            url,
+            params={"key": api_key},
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=timeout,
+        )
+        if resp.status_code != 200:
+            return f"[요약 실패: 상태코드 {resp.status_code}]"
+        data = resp.json()
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return "[요약 실패: 응답에 결과 없음]"
+        parts = candidates[0].get("content", {}).get("parts", [])
+        text = "".join(p.get("text", "") for p in parts).strip()
+        return text
+    except Exception as e:
+        return f"[요약 실패: {e}]"
+
+
+def add_ai_summaries(
+    df: pd.DataFrame,
+    gemini_api_key: str,
+    max_articles: int = 20,
+    model: str = "gemini-2.5-flash",
+    logger=None,
+) -> pd.DataFrame:
+    """DataFrame의 각 기사 실제 본문을 가져와 Gemini로 진짜 핵심요약을 생성해 '요약' 컬럼에 추가."""
     if df.empty:
         return df
     df = df.copy()
@@ -218,7 +314,36 @@ def add_summaries(df: pd.DataFrame, max_articles: int = 30, logger=None) -> pd.D
             summaries.append("")
             continue
         if logger:
-            logger.log(f"  ({i + 1}/{n}) 요약 가져오는 중: {row['제목'][:30]}...")
-        summaries.append(fetch_article_summary(row["링크"]))
+            logger.log(f"  ({i + 1}/{n}) 기사 본문 읽는 중: {row['제목'][:30]}...")
+        try:
+            resp = requests.get(
+                row["링크"],
+                timeout=8.0,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                allow_redirects=True,
+            )
+            final_url = resp.url
+            if logger:
+                stayed_on_google = "google.com" in final_url
+                logger.log(
+                    f"    [진단] 도달 주소: {final_url[:90]} "
+                    f"{'(⚠️ 구글에 머물러 있음)' if stayed_on_google else '(언론사 사이트 도달)'}"
+                )
+            if resp.status_code != 200:
+                summaries.append("")
+                continue
+            article_text = extract_article_text(resp.text)
+            if not article_text or len(article_text) < 50:
+                if logger:
+                    logger.log(f"    [진단] 본문 추출 실패 또는 너무 짧음(길이={len(article_text)})")
+                summaries.append("")
+                continue
+            summary = summarize_with_gemini(article_text, gemini_api_key, model=model)
+            summaries.append(summary)
+        except Exception as e:
+            if logger:
+                logger.log(f"    [진단] 처리 중 오류: {e}")
+            summaries.append("")
+        time.sleep(0.2)
     df["요약"] = summaries
     return df
