@@ -689,8 +689,8 @@ def _escape_html(s) -> str:
 
 
 def render_notice_calendar(df: pd.DataFrame, key_prefix: str = "cal"):
-    """공고일시/마감일시/현장설명회일을 날짜순 목록(아젠다) 형태로 보여줌.
-    격자형 달력은 칸이 좁아 텍스트가 잘리는 문제가 있어, 날짜별로 쭉 나열하는 방식으로 변경."""
+    """공고일시/마감일시/현장설명회일을 실제 달력(요일별 격자) 모양으로 보여주고,
+    아래에는 날짜별 상세 목록(안 잘리는 표)을 이어서 보여줌."""
     if df.empty:
         st.caption("표시할 일정이 없습니다.")
         return
@@ -731,11 +731,56 @@ def render_notice_calendar(df: pd.DataFrame, key_prefix: str = "cal"):
     selected_label = st.selectbox("표시할 월", month_options, index=default_idx, key=f"{key_prefix}_month_select")
     sel_year, sel_month = months_range[month_options.index(selected_label)]
 
-    st.caption(" · ".join(f"{emoji} {label}" for emoji, _, label in CALENDAR_EVENT_TYPES.values()))
+    st.caption(" · ".join(f"{emoji} {label}" for emoji, _, label in CALENDAR_EVENT_TYPES.values()) + " — 날짜 칸의 숫자는 건수입니다.")
 
-    weekday_kr = ["월", "화", "수", "목", "금", "토", "일"]
+    # ---------- 위쪽: 진짜 달력 그리드(일~토) ----------
+    weekday_labels = ["일", "월", "화", "수", "목", "금", "토"]
     today_str = datetime.now().strftime("%Y-%m-%d")
+    cal_gen = calendar.Calendar(firstweekday=6)  # 일요일 시작
+    weeks = cal_gen.monthdayscalendar(sel_year, sel_month)
 
+    parts = ['<div style="font-family:\'Malgun Gothic\',\'맑은 고딕\',sans-serif;">']
+    parts.append('<table style="width:100%; border-collapse:collapse; table-layout:fixed;">')
+    parts.append("<tr>" + "".join(
+        f'<th style="padding:8px 4px; background:#F0F2F5; border:1px solid #E5E7EB; '
+        f'font-size:13px; color:#555; font-weight:600;">{d}</th>'
+        for d in weekday_labels
+    ) + "</tr>")
+
+    for week in weeks:
+        parts.append("<tr>")
+        for day in week:
+            if day == 0:
+                parts.append('<td style="border:1px solid #EFEFEF; height:76px; background:#FAFAFA;"></td>')
+                continue
+            date_str = f"{sel_year}-{sel_month:02d}-{day:02d}"
+            day_events = events.get(date_str, [])
+            is_today = date_str == today_str
+            bg = "#FFF7E6" if is_today else "#FFFFFF"
+            day_num_color = "#EA580C" if is_today else "#222222"
+            cell_html = f'<div style="font-weight:700; font-size:14px; color:{day_num_color}; margin-bottom:5px;">{day}</div>'
+            if day_events:
+                counts = {}
+                for ev in day_events:
+                    counts[ev["종류"]] = counts.get(ev["종류"], 0) + 1
+                badge_html = '<div style="display:flex; flex-direction:column; gap:2px;">'
+                for etype, count in counts.items():
+                    emoji, color, _ = CALENDAR_EVENT_TYPES[etype]
+                    badge_html += (
+                        f'<span style="font-size:12px; color:{color}; font-weight:600;">{emoji} {count}건</span>'
+                    )
+                badge_html += "</div>"
+                cell_html += badge_html
+            parts.append(
+                f'<td style="border:1px solid #EFEFEF; height:76px; vertical-align:top; '
+                f'padding:6px; background:{bg};">{cell_html}</td>'
+            )
+        parts.append("</tr>")
+    parts.append("</table></div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+    # ---------- 아래쪽: 선택한 달의 날짜별 상세 목록(안 잘리는 표) ----------
+    weekday_kr = ["월", "화", "수", "목", "금", "토", "일"]
     month_dates = sorted(
         d for d in all_dates
         if datetime.strptime(d, "%Y-%m-%d").year == sel_year
@@ -745,6 +790,8 @@ def render_notice_calendar(df: pd.DataFrame, key_prefix: str = "cal"):
     if not month_dates:
         st.caption("이 달에는 일정이 없습니다.")
         return
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
     for date_str in month_dates:
         dt = datetime.strptime(date_str, "%Y-%m-%d")
