@@ -852,6 +852,23 @@ def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_fi
     unique_suffix = st.session_state[session_key]
     zip_base = str(BASE_DIR / "output" / f"{key_prefix}_{unique_suffix}_첨부파일_zip")
     zip_path = shutil.make_archive(zip_base, "zip", root_dir=str(attachment_dir_path))
+
+    # [진단] 서버에서 만든 직후, 이 zip이 실제로 정상인지 바로 검증
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            bad_entry = zf.testzip()
+            entries = zf.infolist()
+            longest = max((len(e.filename) for e in entries), default=0)
+            if bad_entry is not None:
+                st.warning(f"⚠️ [진단] 서버에서 만든 zip 안의 '{bad_entry}' 항목이 이미 손상되어 있습니다.")
+            else:
+                st.caption(
+                    f"🔧 [진단] 서버측 zip 검증: 정상 (파일 {len(entries)}개, "
+                    f"압축 크기 {os.path.getsize(zip_path):,} bytes, 가장 긴 경로 {longest}자)"
+                )
+    except zipfile.BadZipFile as e:
+        st.warning(f"⚠️ [진단] 서버에서 zip을 여는 것부터 실패했습니다: {e}")
+
     with open(zip_path, "rb") as f:
         zip_bytes = f.read()
     try:
