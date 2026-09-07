@@ -8,6 +8,7 @@ app.py - 정비사업 입찰공고 수집기 사내 웹앱 (Streamlit)
 """
 import os
 import io
+import unicodedata
 import json
 import shutil
 import base64
@@ -846,6 +847,10 @@ def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_fi
     (원래는 폴더명 알파벳순으로 나와서 표 순서와 안 맞았던 문제를 해결)."""
     # 메모리에서 직접 zip을 만듦 (디스크에 썼다가 다시 읽는 shutil.make_archive 방식에서
     # 원인 불명의 손상이 발생해서, 더 단순하고 확실한 방식으로 교체)
+    #
+    # 중요: 리눅스 서버에서 만든 한글 파일명이 조합형(NFD)으로 되어있으면
+    # 윈도우 탐색기/반디집 등에서 "zip이 올바르지 않다"고 나오는 경우가 있어서,
+    # zip에 넣기 전에 모든 경로명을 완성형(NFC)으로 통일함.
     zip_buffer = io.BytesIO()
     file_count = 0
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -856,7 +861,8 @@ def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_fi
                     arcname = full_path.relative_to(attachment_dir_path)
                 except ValueError:
                     continue
-                zf.write(full_path, arcname=str(arcname))
+                arcname_str = unicodedata.normalize("NFC", str(arcname))
+                zf.write(full_path, arcname=arcname_str)
                 file_count += 1
     zip_bytes = zip_buffer.getvalue()
 
