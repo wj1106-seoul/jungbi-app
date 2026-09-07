@@ -9,6 +9,7 @@ app.py - 정비사업 입찰공고 수집기 사내 웹앱 (Streamlit)
 import os
 import json
 import shutil
+import uuid
 import base64
 import subprocess
 import zipfile
@@ -843,17 +844,28 @@ def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_fi
     """첨부파일 zip 전체 다운로드 + 파일별 미리보기/개별 다운로드 UI를 렌더링.
     ordered_folder_names를 넘기면, 그 순서(=화면 표의 연번 순서) 그대로 폴더를 보여줌
     (원래는 폴더명 알파벳순으로 나와서 표 순서와 안 맞았던 문제를 해결)."""
-    zip_base = str(BASE_DIR / "output" / f"{key_prefix}_첨부파일_zip")
+    # 세션마다 고유한 zip 파일명을 써서, 여러 사람이 동시에 접속했을 때
+    # 서로 다른 사람의 압축파일 생성이 같은 파일을 덮어써서 깨지는 문제를 방지
+    session_key = "_zip_session_id"
+    if session_key not in st.session_state:
+        st.session_state[session_key] = uuid.uuid4().hex[:10]
+    unique_suffix = st.session_state[session_key]
+    zip_base = str(BASE_DIR / "output" / f"{key_prefix}_{unique_suffix}_첨부파일_zip")
     zip_path = shutil.make_archive(zip_base, "zip", root_dir=str(attachment_dir_path))
     with open(zip_path, "rb") as f:
-        st.download_button(
-            "⬇️ 전체 한 번에 다운로드 (zip)",
-            data=f.read(),
-            file_name=zip_file_name,
-            mime="application/zip",
-            use_container_width=True,
-            key=f"{key_prefix}_zip_dl",
-        )
+        zip_bytes = f.read()
+    try:
+        os.remove(zip_path)  # 다운로드용 바이트는 이미 읽었으니, 디스크에 남겨둘 필요 없음(다음 세션과도 안 섞이게 정리)
+    except OSError:
+        pass
+    st.download_button(
+        "⬇️ 전체 한 번에 다운로드 (zip)",
+        data=zip_bytes,
+        file_name=zip_file_name,
+        mime="application/zip",
+        use_container_width=True,
+        key=f"{key_prefix}_zip_dl",
+    )
     st.divider()
     st.caption("파일별로 👁 미리보기(다운로드 없이 내용 확인) 또는 ⬇️ 개별 다운로드를 받으실 수 있습니다.")
 
