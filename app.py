@@ -7,9 +7,9 @@ app.py - 정비사업 입찰공고 수집기 사내 웹앱 (Streamlit)
 그 다음 같은 사내망에 있는 다른 PC에서 http://<이 PC의 IP>:8501 로 접속하면 됩니다.
 """
 import os
+import io
 import json
 import shutil
-import uuid
 import base64
 import subprocess
 import zipfile
@@ -844,37 +844,38 @@ def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_fi
     """첨부파일 zip 전체 다운로드 + 파일별 미리보기/개별 다운로드 UI를 렌더링.
     ordered_folder_names를 넘기면, 그 순서(=화면 표의 연번 순서) 그대로 폴더를 보여줌
     (원래는 폴더명 알파벳순으로 나와서 표 순서와 안 맞았던 문제를 해결)."""
-    # 세션마다 고유한 zip 파일명을 써서, 여러 사람이 동시에 접속했을 때
-    # 서로 다른 사람의 압축파일 생성이 같은 파일을 덮어써서 깨지는 문제를 방지
-    session_key = "_zip_session_id"
-    if session_key not in st.session_state:
-        st.session_state[session_key] = uuid.uuid4().hex[:10]
-    unique_suffix = st.session_state[session_key]
-    zip_base = str(BASE_DIR / "output" / f"{key_prefix}_{unique_suffix}_첨부파일_zip")
-    zip_path = shutil.make_archive(zip_base, "zip", root_dir=str(attachment_dir_path))
+    # 메모리에서 직접 zip을 만듦 (디스크에 썼다가 다시 읽는 shutil.make_archive 방식에서
+    # 원인 불명의 손상이 발생해서, 더 단순하고 확실한 방식으로 교체)
+    zip_buffer = io.BytesIO()
+    file_count = 0
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for root, _dirs, files in os.walk(attachment_dir_path):
+            for fname in sorted(files):
+                full_path = Path(root) / fname
+                try:
+                    arcname = full_path.relative_to(attachment_dir_path)
+                except ValueError:
+                    continue
+                zf.write(full_path, arcname=str(arcname))
+                file_count += 1
+    zip_bytes = zip_buffer.getvalue()
 
-    # [진단] 서버에서 만든 직후, 이 zip이 실제로 정상인지 바로 검증
+    # [진단] 만든 직후 바로 재검증
     try:
-        with zipfile.ZipFile(zip_path) as zf:
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
             bad_entry = zf.testzip()
             entries = zf.infolist()
             longest = max((len(e.filename) for e in entries), default=0)
             if bad_entry is not None:
-                st.warning(f"⚠️ [진단] 서버에서 만든 zip 안의 '{bad_entry}' 항목이 이미 손상되어 있습니다.")
+                st.warning(f"⚠️ [진단] 만든 zip 안의 '{bad_entry}' 항목이 이미 손상되어 있습니다.")
             else:
                 st.caption(
-                    f"🔧 [진단] 서버측 zip 검증: 정상 (파일 {len(entries)}개, "
-                    f"압축 크기 {os.path.getsize(zip_path):,} bytes, 가장 긴 경로 {longest}자)"
+                    f"🔧 [진단] zip 검증: 정상 (파일 {len(entries)}개, "
+                    f"압축 크기 {len(zip_bytes):,} bytes, 가장 긴 경로 {longest}자)"
                 )
     except zipfile.BadZipFile as e:
-        st.warning(f"⚠️ [진단] 서버에서 zip을 여는 것부터 실패했습니다: {e}")
+        st.warning(f"⚠️ [진단] zip을 여는 것부터 실패했습니다: {e}")
 
-    with open(zip_path, "rb") as f:
-        zip_bytes = f.read()
-    try:
-        os.remove(zip_path)  # 다운로드용 바이트는 이미 읽었으니, 디스크에 남겨둘 필요 없음(다음 세션과도 안 섞이게 정리)
-    except OSError:
-        pass
     st.download_button(
         "⬇️ 전체 한 번에 다운로드 (zip)",
         data=zip_bytes,
