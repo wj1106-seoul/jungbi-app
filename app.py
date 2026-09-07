@@ -848,22 +848,30 @@ def render_attachment_browser(attachment_dir_path: Path, key_prefix: str, zip_fi
     # 메모리에서 직접 zip을 만듦 (디스크에 썼다가 다시 읽는 shutil.make_archive 방식에서
     # 원인 불명의 손상이 발생해서, 더 단순하고 확실한 방식으로 교체)
     #
-    # 참고: 한글 폴더/파일명이 들어간 zip을 일부 윈도우 환경(탐색기·반디집 등)에서
-    # "압축 폴더가 올바르지 않습니다"라며 못 여는 사례가 있었음. 조합형(NFD)을
-    # 완성형(NFC)으로 통일해서 재시도 중 — 만약 또 문제가 생기면 폴더/파일명을
-    # 영문+숫자로 바꾸는 방식(과거 버전 참고)으로 되돌릴 수 있음.
+    # 확인된 사실: 폴더명+파일명이 모두 한글이면 일부 윈도우 환경(탐색기·반디집 등)에서
+    # "압축 폴더가 올바르지 않습니다"라며 못 여는 것으로 확인됨. 절충안으로 폴더명은
+    # 숫자(안전하게 검증됨)로 하고, 파일명만 한글(NFC 정규화)로 시도함.
+    folder_entries = []
+    for root, _dirs, files in os.walk(attachment_dir_path):
+        if not files:
+            continue
+        folder_entries.append((Path(root), sorted(files)))
+    folder_entries.sort(key=lambda x: str(x[0]))
+
     zip_buffer = io.BytesIO()
     file_count = 0
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for root, _dirs, files in os.walk(attachment_dir_path):
-            for fname in sorted(files):
-                full_path = Path(root) / fname
-                try:
-                    arcname = full_path.relative_to(attachment_dir_path)
-                except ValueError:
-                    continue
-                arcname_str = unicodedata.normalize("NFC", str(arcname))
-                zf.write(full_path, arcname=arcname_str)
+        for folder_idx, (folder_path, files) in enumerate(folder_entries, start=1):
+            try:
+                original_folder_name = str(folder_path.relative_to(attachment_dir_path))
+            except ValueError:
+                original_folder_name = folder_path.name
+            safe_folder = f"{folder_idx:02d}"
+            zf.writestr(f"{safe_folder}/info.txt", f"원래 폴더명: {original_folder_name}\n")
+            for fname in files:
+                full_path = folder_path / fname
+                safe_fname = unicodedata.normalize("NFC", fname)
+                zf.write(full_path, arcname=f"{safe_folder}/{safe_fname}")
                 file_count += 1
     zip_bytes = zip_buffer.getvalue()
 
