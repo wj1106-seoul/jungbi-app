@@ -1101,8 +1101,19 @@ def download_attachments_for_row(row, attachment_dir: Path):
     project_type = row.get("_사업유형", "")
     content_label = row.get("_세부내역") or row.get("_구분") or ""
 
-    folder_name = sanitize_filename(f"{institution}_{row['공고명']}")
+    # 발주기관명을 앞에 붙이면 공고명과 겹쳐서 불필요하게 길어지는 경우가 많아
+    # (예: "OO조합_OO조합 재건축 설계자 선정"), 기본적으로는 공고명만 폴더명으로 사용.
+    # 발주기관 정보는 화면 표·엑셀에 이미 별도 컬럼으로 나와있어서 폴더명에 없어도 확인 가능.
+    # 다만 서로 다른 발주기관인데 공고명이 우연히 같은 경우(짧고 흔한 제목 등) 폴더가
+    # 하나로 합쳐지는 사고를 막기 위해, 이미 다른 공고가 써버린 폴더라면 발주기관 축약명을
+    # 붙여서 구분함.
+    notice_name = row["공고명"]
+    folder_name = sanitize_filename(notice_name)
     folder_path = Path(attachment_dir) / folder_name
+    if folder_path.exists() and any(folder_path.iterdir()):
+        short_institution = (institution or "").strip()[:12]
+        folder_name = sanitize_filename(f"{notice_name}_{short_institution}")
+        folder_path = Path(attachment_dir) / folder_name
     folder_path.mkdir(parents=True, exist_ok=True)
 
     doc_labels = ["공고문", "지침서"]
